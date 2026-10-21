@@ -1,0 +1,22 @@
+# Only what main_Combined.py needs (face detection + verification, HSEmotion, OpenGraphAU).
+# Versions match environments/cvmonitor.yaml, the lab's environment. Python 3.11.
+torch==2.0.1
+torchvision==0.15.2
+tensorflow==2.13.0
+keras==2.13.1
+numpy==1.23.5
+pandas==2.1.1
+scipy==1.11.3
+opencv-python==4.8.0.76
+pillow
+matplotlib
+facenet-pytorch==2.5.3
+deepface==0.0.79
+retina-face==0.0.13
+facetorch==0.3.0
+omegaconf==2.3.0
+timm==0.9.7
+easydict
+pykalman==0.9.5
+moviepy==1.0.3
+gdown>=5.2  # 4.7.1 (the lab env) can no longer download from Google Drive

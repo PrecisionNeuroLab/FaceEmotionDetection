@@ -1,43 +1,90 @@
-from utils import *
-from utilsHSE import *
-from utilsVerify import *
 import os
+import sys
+import shutil
 import time
 import datetime
-import cv2
-import torch
 import argparse
-from facenet_pytorch import MTCNN
-import gc
+from facedx_settings import REPO_DIR, DEFAULT_CONFIG, read_settings
+
+# Model files (HSE_models/, megraphau/checkpoints/) are found relative to the repo folder
+os.chdir(REPO_DIR)
 
 
-# Main parameters
-PAT_NOW = "S23_174"
-VIDEO_DIRECTORY = os.path.abspath(f'/home/klab/NAS/Analysis/MP4/{PAT_NOW}_MP4')
-SUBJECT_FACE_IMAGE_FOLDER = os.path.abspath(f'/home/klab/NAS/Analysis/MP4/{PAT_NOW}_MP4/targetFace')
-OUTPUT_DIRECTORY = os.path.abspath(f'/home/klab/NAS/Analysis/outputs_Combined/{PAT_NOW}/') 
-OUTPUT_DIRECTORY_PARTIAL_VERIFY = os.path.abspath(f'/home/klab/NAS/Analysis/outputs_Combined_PatData/{PAT_NOW}/') 
-
-
-# Device
 def create_parser():
-    parser = argparse.ArgumentParser(description='Process device information.')
-
-    # Add the 'device' argument
-    # It accepts values like 'cuda:0', 'cpu', or 'cuda:1'
-    parser.add_argument('--device', type=str, required=True,
-                        help='Specify the device to use, e.g., cuda:0, cpu, cuda:1')
-    
-    # Forcing HSE to CPU?
+    parser = argparse.ArgumentParser(description='FaceDx: emotions (HSEmotion) and action units (OpenGraphAU) for every video of one patient.')
+    parser.add_argument('--patient', type=str, required=True,
+                        help='Patient folder name, e.g. S23_174 (videos in MP4_ROOT/S23_174_MP4/)')
+    parser.add_argument('--device', type=str, default=None,
+                        help='Device to use, e.g. cuda:0, cuda:1, cpu (default: cuda:0 if a GPU is found, else cpu)')
     parser.add_argument('--force-hse-cpu', action='store_true',
-                        help='Force the use of HSE CPU if set')
-
+                        help='Run HSEmotion (TensorFlow) on the CPU')
+    parser.add_argument('--config', type=str, default=DEFAULT_CONFIG,
+                        help='Settings file (default: local_settings.env in the repo folder)')
+    parser.add_argument('--video-dir', type=str, default=None,
+                        help='Folder with the .mp4 videos (default: MP4_ROOT/<patient>_MP4)')
+    parser.add_argument('--face-dir', type=str, default=None,
+                        help='Folder with .jpg photos of the patient (default: <video folder>/targetFace)')
+    parser.add_argument('--limit', type=int, default=None,
+                        help='Process at most this many videos (for a test run)')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Print the folders and the videos left to process, then stop (loads no models)')
     return parser
+
+
+def list_unprocessed(video_dir, output_dir):
+    # A video is done once its output folder exists: the folder is renamed into place only after the whole video is processed
+    videos = sorted(vid for vid in os.listdir(video_dir) if not vid.startswith('.') and vid.endswith('.mp4')
+                    and os.path.isfile(os.path.join(video_dir, vid)))
+    return [vid for vid in videos if not os.path.exists(os.path.join(output_dir, vid))]
+
 
 parser = create_parser()
 args = parser.parse_args()
-device = args.device
+settings = read_settings(args.config)
+
+# Main parameters
+PAT_NOW = args.patient
+VIDEO_DIRECTORY = os.path.abspath(args.video_dir or os.path.join(settings['MP4_ROOT'], f'{PAT_NOW}_MP4'))
+SUBJECT_FACE_IMAGE_FOLDER = os.path.abspath(args.face_dir or os.path.join(VIDEO_DIRECTORY, 'targetFace'))
+OUTPUT_DIRECTORY = os.path.abspath(os.path.join(settings['OUT_ROOT'], 'outputs_Combined', PAT_NOW))
+OUTPUT_DIRECTORY_PARTIAL_VERIFY = os.path.abspath(os.path.join(settings['OUT_ROOT'], 'outputs_Combined_PatData', PAT_NOW))
+os.environ.setdefault('DEEPFACE_HOME', settings['DEEPFACE_HOME'])
+
+print(f'Settings file:  {args.config}' + ('' if os.path.exists(args.config) else ' (not found, using defaults)'))
+print(f'Videos:         {VIDEO_DIRECTORY}')
+print(f'Patient photos: {SUBJECT_FACE_IMAGE_FOLDER}')
+print(f'Outputs:        {OUTPUT_DIRECTORY}')
+print(f'Face samples:   {OUTPUT_DIRECTORY_PARTIAL_VERIFY}')
+if not os.path.isdir(VIDEO_DIRECTORY):
+    sys.exit(f'Video folder not found: {VIDEO_DIRECTORY}\nSet MP4_ROOT in {args.config}, or pass --video-dir.')
+patient_photos = [f for f in os.listdir(SUBJECT_FACE_IMAGE_FOLDER) if f.lower().endswith(('.jpg', '.jpeg'))] \
+    if os.path.isdir(SUBJECT_FACE_IMAGE_FOLDER) else []
+unprocessed_videos = list_unprocessed(VIDEO_DIRECTORY, OUTPUT_DIRECTORY)[:args.limit]
+
+if args.dry_run:
+    print(f'Patient photos found: {len(patient_photos)}' + ('' if patient_photos else '  <-- add .jpg photos of the patient before running'))
+    for path in ['HSE_models/affectnet_emotions/mobilenet_7.h5', 'megraphau/checkpoints/OpenGprahAU-SwinB_first_stage.pth',
+                 'megraphau/checkpoints/swin_base_patch4_window7_224.pth']:
+        print(f'Model file {path}: ' + ('ok' if os.path.exists(path) else 'MISSING (run: python download_models.py)'))
+    print(f'Videos to process: {len(unprocessed_videos)}' + (f' (--limit {args.limit})' if args.limit else ''))
+    for vid in unprocessed_videos:
+        print(f'  {vid}')
+    sys.exit(0)
+
+if not patient_photos:
+    sys.exit(f'No .jpg photos of the patient in {SUBJECT_FACE_IMAGE_FOLDER}: they are needed to tell the patient apart from other people.')
+
+from utils import *
+from utilsHSE import *
+from utilsVerify import *
+import cv2
+import torch
+from facenet_pytorch import MTCNN
+import gc
+
+device = args.device or ('cuda:0' if torch.cuda.is_available() else 'cpu')
 FORCE_HSE_CPU = args.force_hse_cpu
+print(f'Device: {device}' + (' (HSEmotion on CPU)' if FORCE_HSE_CPU else ''))
 
 if 'cuda' in device:
   use_cuda = True
@@ -92,9 +139,6 @@ if not os.path.exists(OUTPUT_DIRECTORY_PARTIAL_VERIFY):
 SAVE_PATH_FOLDER = lambda video_name: os.path.join(OUTPUT_DIRECTORY, f'{video_name}')
 SAVE_PATH_FOLDER_PARTIAL_VERIFY = lambda video_name: os.path.join(OUTPUT_DIRECTORY_PARTIAL_VERIFY, f'{video_name}')
 
-# List of unprocessed videos
-unprocessed_videos = get_valid_vids(VIDEO_DIRECTORY, SAVE_PATH_FOLDER)
-
 # For timing estimation
 num_vids = len(unprocessed_videos)
 start_time = time.time()
@@ -117,6 +161,7 @@ if Do_Verification:
 # Loop through all videos
 for i in unprocessed_videos:
   video_path = os.path.join(VIDEO_DIRECTORY, i)
+  print(f'===== Video {unprocessed_videos.index(i) + 1}/{num_vids}: {i}')
 
   frame_now = 0 # this is what we save in outputs file and print
 
@@ -132,8 +177,14 @@ for i in unprocessed_videos:
     print('-'*15)
 
   # Save paths/folders
-  save_folder_now = SAVE_PATH_FOLDER(i)
+  # Results are written to <video>.partial/ and renamed to <video>/ when the video is finished,
+  # so a video interrupted by a crash is redone from the start on the next run
+  final_folder_now = SAVE_PATH_FOLDER(i)
+  save_folder_now = final_folder_now + '.partial'
   save_folder_partial_verify_now = SAVE_PATH_FOLDER_PARTIAL_VERIFY(i)
+  if os.path.exists(save_folder_now):
+    print(f'Removing unfinished results from an earlier run: {save_folder_now}')
+    shutil.rmtree(save_folder_now)
   os.mkdir(save_folder_now)
   if Do_Verification and Partial_Verify:
     os.makedirs(save_folder_partial_verify_now, exist_ok=True)
@@ -339,6 +390,8 @@ for i in unprocessed_videos:
           
       frameNr = frameNr + 1
   capture.release()
+  os.rename(save_folder_now, final_folder_now)
+  print(f'Finished {i}: {final_folder_now}')
 
   # Time estimation
   elapsed_time = time.time() - start_time

@@ -101,15 +101,50 @@ We use a combination of the most widely employed deep learning and computer visi
 <!-- GETTING STARTED -->
 ## Getting Started
 
-TODO
+This covers the face pipeline, `main_Combined.py`: emotions (HSEmotion) and action units (OpenGraphAU) for every
+video of one patient, with face verification so only the patient's face is scored.
 
 ### Prerequisites
 
-TODO
+* Linux with an NVIDIA GPU (a CPU works for testing: a few minutes per minute of video)
+* Python 3.11 and `ffmpeg` (`sudo apt install ffmpeg`)
+* About 3 GB of disk for the model files
 
 ### Installation
 
-TODO
+From the folder you want the repo in:
+
+```bash
+git clone https://github.com/PrecisionNeuroLab/FaceEmotionDetection.git
+cd FaceEmotionDetection
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install --no-cache-dir -r requirements_face.txt
+python download_models.py
+```
+
+`requirements_face.txt` has the versions of the lab's environment (`environments/cvmonitor.yaml`: PyTorch 2.0.1,
+TensorFlow 2.13). `conda env create -f environments/cvmonitor.yaml` gives the full lab environment instead
+(then `pip install "gdown>=5.2"` for the download script).
+
+`download_models.py` clones ME-GraphAU into `megraphau/` and downloads the OpenGraphAU and Swin-B weights into
+`megraphau/checkpoints/` and DeepFace's VGG-Face weights into `model_cache/`, all inside the repo folder (gitignored).
+
+Check that PyTorch and TensorFlow see the GPU:
+
+```bash
+python -c "import torch, tensorflow as tf; print(torch.cuda.is_available(), tf.config.list_physical_devices('GPU'))"
+```
+
+If TensorFlow finds no GPU, run with `--force-hse-cpu` (only HSEmotion, the small emotion model, then runs on the CPU).
+
+**Settings (once):** copy `local_settings.env.example` to `local_settings.env` (gitignored) and keep only the lines
+you change. You don't need to edit it after updates.
+
+```
+MP4_ROOT=/home/klab/NAS/Analysis/MP4
+OUT_ROOT=/home/klab/NAS/Analysis
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -118,7 +153,54 @@ TODO
 <!-- USAGE EXAMPLES -->
 ## Usage
 
-TODO
+Expected layout: one folder of videos per patient, with photos of the patient's face in `targetFace/`:
+
+```
+<MP4_ROOT>/<patient>_MP4/*.mp4
+<MP4_ROOT>/<patient>_MP4/targetFace/*.jpg     # a few clear photos of the patient's face
+```
+
+**1. Convert the raw recordings** (`.m2t`, searched in all subfolders) to `.mp4`. Nothing in the raw folder is
+changed; finished files are skipped on a rerun.
+
+```bash
+python convert_to_mp4.py /path/to/raw/S24_217 --patient S24_217 --dry-run
+python convert_to_mp4.py /path/to/raw/S24_217 --patient S24_217
+```
+
+**2. Add the patient photos** to `<MP4_ROOT>/S24_217_MP4/targetFace/`.
+
+**3. Check the folders and models, then test on one video:**
+
+```bash
+python main_Combined.py --patient S24_217 --dry-run
+python main_Combined.py --patient S24_217 --limit 1
+```
+
+**4. Run all videos in the background** (keeps going if the connection drops):
+
+```bash
+nohup python main_Combined.py --patient S24_217 > facedx_S24_217.log 2>&1 &
+tail -f facedx_S24_217.log
+```
+
+If it stops, run the same command again: finished videos are skipped, and a video that was interrupted is redone
+from the start (results are written to `<video>.partial/` and renamed when the video is finished).
+Other options: `--device cuda:1`, `--video-dir`, `--face-dir`, `--config` (`python main_Combined.py --help`).
+
+**Outputs**, one folder per video in `<OUT_ROOT>/outputs_Combined/<patient>/<video>.mp4/`, one row per analysed
+frame (about 5 per second):
+
+| File | Contents |
+|---|---|
+| `outputs_hse.csv` | probabilities of Anger, Disgust, Fear, Happiness, Neutral, Sadness, Surprise |
+| `outputs_ogau.csv` | probabilities of 41 facial action units (AU1 ... AU39, plus left/right AUs) |
+| `outputs_bboxes.csv` | position and size of the patient's face |
+
+Each row has `frame`, `timestamp` (seconds from the start of the video) and `success`: `1` patient's face found,
+`0` no face, `-1` several faces and none verified as the patient. Scores are 0 when `success` is not 1.
+About 1% of the face crops matched to the patient are saved to `<OUT_ROOT>/outputs_Combined_PatData/<patient>/` for
+checking the verification; they are identifiable images, so keep them on the lab machine.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
