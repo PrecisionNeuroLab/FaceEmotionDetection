@@ -20,3 +20,4 @@ easydict
 pykalman==0.9.5
 moviepy==1.0.3
 gdown>=5.2  # 4.7.1 (the lab env) can no longer download from Google Drive
+setuptools<70  # newer versions removed pkg_resources, which older packages here still import
