@@ -168,11 +168,10 @@ python convert_to_mp4.py /path/to/raw/S24_217 --patient S24_217 --dry-run
 python convert_to_mp4.py /path/to/raw/S24_217 --patient S24_217
 ```
 
-To test on one video first, give a single recording instead of the folder (it goes to the same `MP4_ROOT/S24_217_MP4/`,
-and is skipped when you later convert the whole folder):
+To convert just one video (e.g. for a test), with the same settings:
 
 ```bash
-python convert_to_mp4.py /path/to/raw/S24_217/HospitalRoom/NKT/EEG2100/<session>/<file>.m2t --patient S24_217
+ffmpeg -i /path/to/raw/S24_217/HospitalRoom/NKT/EEG2100/<session>/<file>.m2t -c:v libx264 -preset veryfast -crf 18 -c:a copy <MP4_ROOT>/S24_217_MP4/<file>.mp4
 ```
 
 **2. Add the patient photos** to `<MP4_ROOT>/S24_217_MP4/targetFace/`.

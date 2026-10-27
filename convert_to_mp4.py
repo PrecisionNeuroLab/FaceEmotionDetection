@@ -3,10 +3,6 @@ Convert one patient's raw .m2t recordings to .mp4 for main_Combined.py:
 
     python convert_to_mp4.py /path/to/raw/S24_217 --patient S24_217
 
-or a single recording (e.g. to test on one video):
-
-    python convert_to_mp4.py /path/to/raw/S24_217/.../<file>.m2t --patient S24_217
-
 Finds every .m2t under the raw folder (subfolders too) and writes <name>.mp4 into MP4_ROOT/<patient>_MP4/
 (or --out-dir). Nothing is written to or deleted from the raw folder. Videos already converted are skipped;
 each file is written as <name>.mp4.part and renamed when ffmpeg finishes, so an interrupted conversion is redone.
@@ -21,7 +17,7 @@ import sys
 from facedx_settings import DEFAULT_CONFIG, read_settings
 
 parser = argparse.ArgumentParser(description='Convert a patient\'s .m2t recordings to .mp4 (raw folder is only read).')
-parser.add_argument('raw_dir', help='Raw folder of one patient (searched recursively for .m2t files), or one .m2t file')
+parser.add_argument('raw_dir', help='Raw folder of one patient (searched recursively for .m2t files)')
 parser.add_argument('--patient', help='Patient folder name, e.g. S24_217 (output: MP4_ROOT/S24_217_MP4/)')
 parser.add_argument('--out-dir', help='Output folder (instead of MP4_ROOT/<patient>_MP4/)')
 parser.add_argument('--config', default=DEFAULT_CONFIG, help='Settings file (default: local_settings.env in the repo folder)')
@@ -32,18 +28,13 @@ if not args.out_dir and not args.patient:
     sys.exit('Give --patient (output goes to MP4_ROOT/<patient>_MP4/) or --out-dir.')
 raw_dir = os.path.abspath(args.raw_dir)
 out_dir = os.path.abspath(args.out_dir or os.path.join(read_settings(args.config)['MP4_ROOT'], f'{args.patient}_MP4'))
-if os.path.isfile(raw_dir):
-    if not raw_dir.lower().endswith('.m2t'):
-        sys.exit(f'Not an .m2t file: {raw_dir}')
-    m2t_files = [raw_dir]
-    raw_dir = os.path.dirname(raw_dir)
-elif os.path.isdir(raw_dir):
-    m2t_files = sorted(os.path.join(path, f) for path, _, files in os.walk(raw_dir) for f in files
-                       if f.lower().endswith('.m2t') and not f.startswith('.'))
-else:
-    sys.exit(f'Raw folder or file not found: {raw_dir}')
+if not os.path.isdir(raw_dir):
+    sys.exit(f'Raw folder not found: {raw_dir}')
 if out_dir == raw_dir or out_dir.startswith(raw_dir + os.sep):
     sys.exit(f'The output folder must not be inside the raw folder: {out_dir}')
+
+m2t_files = sorted(os.path.join(path, f) for path, _, files in os.walk(raw_dir) for f in files
+                   if f.lower().endswith('.m2t') and not f.startswith('.'))
 
 # All .mp4 files go into one flat folder, so two recordings with the same name would overwrite each other
 names = {}
