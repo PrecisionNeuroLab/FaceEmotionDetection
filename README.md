@@ -219,6 +219,17 @@ With `--save-face-samples`, about 1% of the face crops matched to the patient ar
 `<OUT_ROOT>/outputs_Combined_PatData/<patient>/` for checking the verification (none are saved by default); they are
 identifiable images, so keep them on the lab machine.
 
+**Watch the results on the video.** `make_overlay.py` turns one video's CSVs into a subtitle file (`.ass`, a few
+MB of text per hour; no video is written), saved next to the CSVs. Opened in VLC with the original recording, it shows
+a box around the patient's face and the top 4 emotions and top 3 action units of each analysed frame:
+
+```bash
+python make_overlay.py --patient S24_217 --video <file>.m2t
+```
+
+In VLC: open the `.m2t` (or `.mp4`), then Subtitle > Add Subtitle File... and pick `<file>.ass`. If the overlay is
+slightly early or late, VLC's G and H keys shift it in 50 ms steps.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 
