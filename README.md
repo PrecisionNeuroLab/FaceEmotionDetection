@@ -219,7 +219,7 @@ With `--save-face-samples`, about 1% of the face crops matched to the patient ar
 `<OUT_ROOT>/outputs_Combined_PatData/<patient>/` for checking the verification (none are saved by default); they are
 identifiable images, so keep them on the lab machine.
 
-**Watch the results on the video.** `make_overlay.py` turns one video's CSVs into a subtitle file (`.ass`, a few
+**Watch the results on the video.** `make_overlay.py` turns one video's CSVs into a subtitle file (`.ass`, up to about 20
 MB of text per hour; no video is written), saved next to the CSVs. Opened in VLC with the original recording, it shows
 a box around the patient's face and the top 4 emotions and top 3 action units of each analysed frame:
 

@@ -5,7 +5,7 @@ Make a subtitle overlay (.ass) of the FaceDx results of one video, to watch alon
 
 Open the video in VLC and add the .ass file (Subtitle > Add Subtitle File...). It shows a box around the patient's
 face and, about 5 times a second, the top 4 emotions and top 3 action units of that frame. No video is written:
-the .ass file is a few MB of text per hour of video, saved next to the video's CSVs.
+the .ass file is up to about 20 MB of text per hour of video, saved next to the video's CSVs.
 """
 
 import argparse
