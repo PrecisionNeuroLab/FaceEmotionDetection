@@ -144,6 +144,7 @@ you change. You don't need to edit it after updates.
 ```
 MP4_ROOT=/home/klab/NAS/Analysis/MP4
 OUT_ROOT=/home/klab/NAS/Analysis
+RAW_ROOT=/path/to/raw      # only for --m2t: RAW_ROOT/<patient>/.../*.m2t
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -174,6 +175,15 @@ To convert just one video (e.g. for a test), with the same settings:
 ffmpeg -i /path/to/raw/S24_217/HospitalRoom/NKT/EEG2100/<session>/<file>.m2t -c:v libx264 -preset veryfast -crf 18 -c:a copy <MP4_ROOT>/S24_217_MP4/<file>.mp4
 ```
 
+**Or skip the conversion** and read the raw `.m2t` files directly (saves the disk space of the `.mp4` copies): set
+`RAW_ROOT` in `local_settings.env` and add `--m2t` to the commands below. All `.m2t` files under `RAW_ROOT/<patient>/`
+(e.g. `RAW_ROOT/S24_217/HospitalRoom/NKT/EEG2100/<session>/`) are processed; the raw folder is only read. The patient
+photos still go in `<MP4_ROOT>/S24_217_MP4/targetFace/`, and output folders are named `<video>.m2t/`.
+
+```bash
+python main_Combined.py --patient S24_217 --m2t --dry-run
+```
+
 **2. Add the patient photos** to `<MP4_ROOT>/S24_217_MP4/targetFace/`.
 
 **3. Check the folders and models, then test on one video:**
@@ -192,7 +202,7 @@ tail -f facedx_S24_217.log
 
 If it stops, run the same command again: finished videos are skipped, and a video that was interrupted is redone
 from the start (results are written to `<video>.partial/` and renamed when the video is finished).
-Other options: `--device cuda:1`, `--video-dir`, `--face-dir`, `--config` (`python main_Combined.py --help`).
+Other options: `--save-face-samples` (see below), `--device cuda:1`, `--video-dir`, `--face-dir`, `--config` (`python main_Combined.py --help`).
 
 **Outputs**, one folder per video in `<OUT_ROOT>/outputs_Combined/<patient>/<video>.mp4/`, one row per analysed
 frame (about 5 per second):
@@ -205,8 +215,9 @@ frame (about 5 per second):
 
 Each row has `frame`, `timestamp` (seconds from the start of the video) and `success`: `1` patient's face found,
 `0` no face, `-1` several faces and none verified as the patient. Scores are 0 when `success` is not 1.
-About 1% of the face crops matched to the patient are saved to `<OUT_ROOT>/outputs_Combined_PatData/<patient>/` for
-checking the verification; they are identifiable images, so keep them on the lab machine.
+With `--save-face-samples`, about 1% of the face crops matched to the patient are saved as `.jpg` to
+`<OUT_ROOT>/outputs_Combined_PatData/<patient>/` for checking the verification (none are saved by default); they are
+identifiable images, so keep them on the lab machine.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

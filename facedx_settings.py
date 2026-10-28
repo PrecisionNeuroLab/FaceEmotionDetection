@@ -6,6 +6,7 @@ DEFAULT_CONFIG = os.path.join(REPO_DIR, 'local_settings.env')
 # Defaults here, overridden by the settings file (KEY=VALUE lines), then by command-line options
 DEFAULT_SETTINGS = {
     'MP4_ROOT': '/home/klab/NAS/Analysis/MP4', # videos in MP4_ROOT/<patient>_MP4/, patient photos in MP4_ROOT/<patient>_MP4/targetFace/
+    'RAW_ROOT': '', # raw recordings (for --m2t): RAW_ROOT/<patient>/.../*.m2t
     'OUT_ROOT': '/home/klab/NAS/Analysis', # outputs in OUT_ROOT/outputs_Combined/<patient>/ and OUT_ROOT/outputs_Combined_PatData/<patient>/
     'DEEPFACE_HOME': os.path.join(REPO_DIR, 'model_cache'), # DeepFace keeps its VGG-Face weights in DEEPFACE_HOME/.deepface/
 }

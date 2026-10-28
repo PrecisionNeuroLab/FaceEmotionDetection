@@ -13,7 +13,9 @@ os.chdir(REPO_DIR)
 def create_parser():
     parser = argparse.ArgumentParser(description='FaceDx: emotions (HSEmotion) and action units (OpenGraphAU) for every video of one patient.')
     parser.add_argument('--patient', type=str, required=True,
-                        help='Patient folder name, e.g. S23_174 (videos in MP4_ROOT/S23_174_MP4/)')
+                        help='Patient folder name, e.g. S23_174 (videos in MP4_ROOT/S23_174_MP4/, or RAW_ROOT/S23_174/ with --m2t)')
+    parser.add_argument('--m2t', action='store_true',
+                        help='Read the raw .m2t recordings in RAW_ROOT/<patient>/ (all subfolders) instead of converted .mp4 files')
     parser.add_argument('--device', type=str, default=None,
                         help='Device to use, e.g. cuda:0, cuda:1, cpu (default: cuda:0 if a GPU is found, else cpu)')
     parser.add_argument('--force-hse-cpu', action='store_true',
@@ -21,9 +23,11 @@ def create_parser():
     parser.add_argument('--config', type=str, default=DEFAULT_CONFIG,
                         help='Settings file (default: local_settings.env in the repo folder)')
     parser.add_argument('--video-dir', type=str, default=None,
-                        help='Folder with the .mp4 videos (default: MP4_ROOT/<patient>_MP4)')
+                        help='Folder with the .mp4 videos (default: MP4_ROOT/<patient>_MP4), or with --m2t the raw folder (default: RAW_ROOT/<patient>)')
     parser.add_argument('--face-dir', type=str, default=None,
-                        help='Folder with .jpg photos of the patient (default: <video folder>/targetFace)')
+                        help='Folder with .jpg photos of the patient (default: MP4_ROOT/<patient>_MP4/targetFace, or <video-dir>/targetFace)')
+    parser.add_argument('--save-face-samples', action='store_true',
+                        help='Save about 1%% of the face crops matched to the patient as .jpg, to check the verification (default: none saved)')
     parser.add_argument('--limit', type=int, default=None,
                         help='Process at most this many videos (for a test run)')
     parser.add_argument('--dry-run', action='store_true',
@@ -31,11 +35,28 @@ def create_parser():
     return parser
 
 
-def list_unprocessed(video_dir, output_dir):
+def list_videos(video_dir, m2t=False):
+    # {file name: path}. .mp4 files directly in video_dir, or .m2t files anywhere under it (raw recordings are in session subfolders)
+    if not m2t:
+        return {vid: os.path.join(video_dir, vid) for vid in os.listdir(video_dir) if not vid.startswith('.')
+                and vid.endswith('.mp4') and os.path.isfile(os.path.join(video_dir, vid))}
+    paths = {}
+    for path, _, files in os.walk(video_dir):
+        for vid in files:
+            if vid.lower().endswith('.m2t') and not vid.startswith('.'):
+                paths.setdefault(vid, []).append(os.path.join(path, vid))
+    # Outputs go into one folder per file name, so two recordings with the same name would mix
+    clashes = {vid: found for vid, found in paths.items() if len(found) > 1}
+    if clashes:
+        for vid, found in clashes.items():
+            print(f'{vid} found in:\n  ' + '\n  '.join(found))
+        sys.exit('Some recordings share a file name; run those session folders separately with --video-dir.')
+    return {vid: found[0] for vid, found in paths.items()}
+
+
+def list_unprocessed(videos, output_dir):
     # A video is done once its output folder exists: the folder is renamed into place only after the whole video is processed
-    videos = sorted(vid for vid in os.listdir(video_dir) if not vid.startswith('.') and vid.endswith('.mp4')
-                    and os.path.isfile(os.path.join(video_dir, vid)))
-    return [vid for vid in videos if not os.path.exists(os.path.join(output_dir, vid))]
+    return [vid for vid in sorted(videos, key=videos.get) if not os.path.exists(os.path.join(output_dir, vid))]
 
 
 parser = create_parser()
@@ -44,8 +65,13 @@ settings = read_settings(args.config)
 
 # Main parameters
 PAT_NOW = args.patient
-VIDEO_DIRECTORY = os.path.abspath(args.video_dir or os.path.join(settings['MP4_ROOT'], f'{PAT_NOW}_MP4'))
-SUBJECT_FACE_IMAGE_FOLDER = os.path.abspath(args.face_dir or os.path.join(VIDEO_DIRECTORY, 'targetFace'))
+MP4_DIRECTORY = os.path.join(settings['MP4_ROOT'], f'{PAT_NOW}_MP4')
+if args.m2t and not args.video_dir and not settings['RAW_ROOT']:
+    sys.exit(f'Set RAW_ROOT (folder with one raw folder per patient) in {args.config}, or pass --video-dir.')
+VIDEO_DIRECTORY = os.path.abspath(args.video_dir or (os.path.join(settings['RAW_ROOT'], PAT_NOW) if args.m2t else MP4_DIRECTORY))
+# Photos are never looked for inside the raw folder
+SUBJECT_FACE_IMAGE_FOLDER = os.path.abspath(args.face_dir or os.path.join(
+    args.video_dir if args.video_dir and not args.m2t else MP4_DIRECTORY, 'targetFace'))
 OUTPUT_DIRECTORY = os.path.abspath(os.path.join(settings['OUT_ROOT'], 'outputs_Combined', PAT_NOW))
 OUTPUT_DIRECTORY_PARTIAL_VERIFY = os.path.abspath(os.path.join(settings['OUT_ROOT'], 'outputs_Combined_PatData', PAT_NOW))
 os.environ.setdefault('DEEPFACE_HOME', settings['DEEPFACE_HOME'])
@@ -54,12 +80,13 @@ print(f'Settings file:  {args.config}' + ('' if os.path.exists(args.config) else
 print(f'Videos:         {VIDEO_DIRECTORY}')
 print(f'Patient photos: {SUBJECT_FACE_IMAGE_FOLDER}')
 print(f'Outputs:        {OUTPUT_DIRECTORY}')
-print(f'Face samples:   {OUTPUT_DIRECTORY_PARTIAL_VERIFY}')
+print(f'Face samples:   ' + (OUTPUT_DIRECTORY_PARTIAL_VERIFY if args.save_face_samples else 'not saved (--save-face-samples to save them)'))
 if not os.path.isdir(VIDEO_DIRECTORY):
-    sys.exit(f'Video folder not found: {VIDEO_DIRECTORY}\nSet MP4_ROOT in {args.config}, or pass --video-dir.')
+    sys.exit(f'Video folder not found: {VIDEO_DIRECTORY}\nSet {"RAW_ROOT" if args.m2t else "MP4_ROOT"} in {args.config}, or pass --video-dir.')
 patient_photos = [f for f in os.listdir(SUBJECT_FACE_IMAGE_FOLDER) if f.lower().endswith(('.jpg', '.jpeg'))] \
     if os.path.isdir(SUBJECT_FACE_IMAGE_FOLDER) else []
-unprocessed_videos = list_unprocessed(VIDEO_DIRECTORY, OUTPUT_DIRECTORY)[:args.limit]
+video_paths = list_videos(VIDEO_DIRECTORY, m2t=args.m2t)
+unprocessed_videos = list_unprocessed(video_paths, OUTPUT_DIRECTORY)[:args.limit]
 
 if args.dry_run:
     print(f'Patient photos found: {len(patient_photos)}' + ('' if patient_photos else '  <-- add .jpg photos of the patient before running'))
@@ -68,7 +95,7 @@ if args.dry_run:
         print(f'Model file {path}: ' + ('ok' if os.path.exists(path) else 'MISSING (run: python download_models.py)'))
     print(f'Videos to process: {len(unprocessed_videos)}' + (f' (--limit {args.limit})' if args.limit else ''))
     for vid in unprocessed_videos:
-        print(f'  {vid}')
+        print(f'  {os.path.relpath(video_paths[vid], VIDEO_DIRECTORY)}')
     sys.exit(0)
 
 if not patient_photos:
@@ -127,12 +154,12 @@ OPENGRAPHAU_MODEL_PATH = os.path.abspath('megraphau/checkpoints/OpenGprahAU-Swin
 INPUT_SIZE = (224, 224)
 FPS_EXTRACTING = 5 # we'll extract this many fps from the video for analysis
 DISTANCE_MAX_PARTIAL_VERIFY = 30
-SAVE_PROB_PARTIAL_VERIFY = 0.01
+SAVE_PROB_PARTIAL_VERIFY = 0.01 if args.save_face_samples else 0 # share of patient face crops saved as .jpg
 
 # Make output dirs if they don't exist
 if not os.path.exists(OUTPUT_DIRECTORY):
     os.makedirs(OUTPUT_DIRECTORY)
-if not os.path.exists(OUTPUT_DIRECTORY_PARTIAL_VERIFY):
+if args.save_face_samples and not os.path.exists(OUTPUT_DIRECTORY_PARTIAL_VERIFY):
     os.makedirs(OUTPUT_DIRECTORY_PARTIAL_VERIFY)
 
 # Function that gets us the output folder for each input video
@@ -160,7 +187,7 @@ if Do_Verification:
 
 # Loop through all videos
 for i in unprocessed_videos:
-  video_path = os.path.join(VIDEO_DIRECTORY, i)
+  video_path = video_paths[i]
   print(f'===== Video {unprocessed_videos.index(i) + 1}/{num_vids}: {i}')
 
   frame_now = 0 # this is what we save in outputs file and print
@@ -186,7 +213,7 @@ for i in unprocessed_videos:
     print(f'Removing unfinished results from an earlier run: {save_folder_now}')
     shutil.rmtree(save_folder_now)
   os.mkdir(save_folder_now)
-  if Do_Verification and Partial_Verify:
+  if Do_Verification and Partial_Verify and args.save_face_samples:
     os.makedirs(save_folder_partial_verify_now, exist_ok=True)
   save_path_hse = os.path.join(save_folder_now, f'outputs_hse.csv')
   save_path_ogau = os.path.join(save_folder_now, f'outputs_ogau.csv') 
