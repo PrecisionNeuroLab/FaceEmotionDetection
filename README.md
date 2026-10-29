@@ -219,16 +219,21 @@ With `--save-face-samples`, about 1% of the face crops matched to the patient ar
 `<OUT_ROOT>/outputs_Combined_PatData/<patient>/` for checking the verification (none are saved by default); they are
 identifiable images, so keep them on the lab machine.
 
-**Watch the results on the video.** `make_overlay.py` turns one video's CSVs into a subtitle file (`.ass`, up to about 20
-MB of text per hour; no video is written), saved next to the CSVs. Opened in VLC with the original recording, it shows
-a box around the patient's face and the top 4 emotions and top 3 action units of each analysed frame:
+**Watch the results on the video.** `play_results.py` plays the original recording in a window with the results
+drawn on top: a box around the patient's face and the top 4 emotions and top 3 action units of each analysed frame.
+Nothing is written to disk. It needs a screen on the lab machine (or X forwarding) and `ffmpeg`.
 
 ```bash
-python make_overlay.py --patient S24_217 --video <file>.m2t
+python play_results.py --patient S24_217 --video <file>.m2t
+python play_results.py --patient S24_217 --video <file>.m2t --start 1:20:00
 ```
 
-In VLC: open the `.m2t` (or `.mp4`), then Subtitle > Add Subtitle File... and pick `<file>.ass`. If the overlay is
-slightly early or late, VLC's G and H keys shift it in 50 ms steps.
+Keys: space pause/play, left/right (or a/d) 10 s, down/up (or s/w) 1 min, q quit. Frames are numbered from their
+timestamps in the recording, so the overlay matches the CSV frame numbers exactly, also after a jump.
+
+`make_overlay.py` writes the same overlay as a subtitle file (`.ass`, up to about 20 MB per hour) next to the CSVs, for
+other video players. VLC breaks with it on `.m2t` recordings (the picture disappears and playback jumps), so use
+`play_results.py` for those.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

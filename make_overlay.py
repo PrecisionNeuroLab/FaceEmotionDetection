@@ -103,63 +103,80 @@ def merged_events(times, texts):
     return events
 
 
-parser = argparse.ArgumentParser(description='Make a subtitle overlay (.ass) of the FaceDx results of one video, for VLC.')
-parser.add_argument('--patient', required=True, help='Patient folder name, e.g. S24_217')
-parser.add_argument('--video', required=True, help='Video file name (e.g. <file>.m2t, looked up in RAW_ROOT and MP4_ROOT) or its full path')
-parser.add_argument('--config', default=DEFAULT_CONFIG, help='Settings file (default: local_settings.env in the repo folder)')
-args = parser.parse_args()
-settings = read_settings(args.config)
+def results_path(patient, name, settings):
+    return os.path.join(settings['OUT_ROOT'], 'outputs_Combined', patient, name)
 
-video_path = find_video(args.video, args.patient, settings)
-name = os.path.basename(video_path)
-results_dir = os.path.join(settings['OUT_ROOT'], 'outputs_Combined', args.patient, name)
-if not os.path.isdir(results_dir):
-    sys.exit(f'No finished results for {name} in {results_dir}' +
-             (' (still being processed)' if os.path.isdir(results_dir + '.partial') else ''))
 
-capture = cv2.VideoCapture(video_path)
-fps = capture.get(cv2.CAP_PROP_FPS)
-width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-capture.release()
-if not fps or not width:
-    sys.exit(f'Could not read the frame rate and size of {video_path}')
+def load_results(patient, video, settings):
+    # The video's path, its CSV rows merged on frame (sorted), the emotion and AU columns, and its fps and size
+    video_path = find_video(video, patient, settings)
+    name = os.path.basename(video_path)
+    results_dir = results_path(patient, name, settings)
+    if not os.path.isdir(results_dir):
+        sys.exit(f'No finished results for {name} in {results_dir}' +
+                 (' (still being processed)' if os.path.isdir(results_dir + '.partial') else ''))
 
-hse = pd.read_csv(os.path.join(results_dir, 'outputs_hse.csv'))
-ogau = pd.read_csv(os.path.join(results_dir, 'outputs_ogau.csv'))
-bboxes = pd.read_csv(os.path.join(results_dir, 'outputs_bboxes.csv'))
-emotions = list(hse.columns[3:])
-aus = [c for c in ogau.columns if c in AU_NAMES]
-rows = hse.merge(ogau.drop(columns=['timestamp', 'success']), on='frame').merge(
-    bboxes.drop(columns=['timestamp', 'success']), on='frame').sort_values('frame')
+    capture = cv2.VideoCapture(video_path)
+    fps = capture.get(cv2.CAP_PROP_FPS)
+    width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    capture.release()
+    if not fps or not width:
+        sys.exit(f'Could not read the frame rate and size of {video_path}')
 
-# Times from frame numbers and the real frame rate (the CSV timestamps use the rounded-up rate, e.g. 30 for 29.97)
-step = rows['frame'].diff().median() if len(rows) > 1 else 1
-times = list(rows['frame'] / fps) + [(rows['frame'].iloc[-1] + step) / fps]
-font_size = round(height / 32)
-records = [row for _, row in rows.iterrows()]
-panel = merged_events(times, [panel_text(r, emotions, aus) for r in records])
-boxes = merged_events(times, [face_box_text(r) for r in records])
+    hse = pd.read_csv(os.path.join(results_dir, 'outputs_hse.csv'))
+    ogau = pd.read_csv(os.path.join(results_dir, 'outputs_ogau.csv'))
+    bboxes = pd.read_csv(os.path.join(results_dir, 'outputs_bboxes.csv'))
+    emotions = list(hse.columns[3:])
+    aus = [c for c in ogau.columns if c in AU_NAMES]
+    rows = hse.merge(ogau.drop(columns=['timestamp', 'success']), on='frame').merge(
+        bboxes.drop(columns=['timestamp', 'success']), on='frame').sort_values('frame')
+    return video_path, rows, emotions, aus, fps, width, height
 
-margin = round(font_size * 0.8)
-out_path = os.path.join(results_dir, os.path.splitext(name)[0] + '.ass')
-with open(out_path + '.part', 'w') as file:
-    file.write('[Script Info]\nScriptType: v4.00+\n'
-               f'PlayResX: {width}\nPlayResY: {height}\nScaledBorderAndShadow: yes\nWrapStyle: 2\n\n'
-               '[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, '
-               'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
-               'Alignment, MarginL, MarginR, MarginV, Encoding\n'
-               # Thin black outline around the text (no background box, which is slow to draw in VLC)
-               f'Style: Panel,DejaVu Sans,{font_size},&H00E8EFF1,&H00E8EFF1,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{max(1, round(font_size / 16))},0,7,{margin},{margin},{margin},1\n'
-               f'Style: Box,Sans,{font_size},&HFF000000,&HFF000000,&H00{FACE_BOX[2:-1]},&HFF000000,0,0,0,0,100,100,0,0,1,{max(2, round(height / 360))},0,7,0,0,0,1\n\n'
-               '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n')
-    for start, end, text in boxes:
-        file.write(f'Dialogue: 0,{ass_time(start)},{ass_time(end)},Box,,0,0,0,,{text}\n')
-    for start, end, text in panel:
-        file.write(f'Dialogue: 1,{ass_time(start)},{ass_time(end)},Panel,,0,0,0,,{text}\n')
-os.replace(out_path + '.part', out_path)
 
-found = (rows['success'] == 1).mean()
-print(f'Video:   {video_path} ({width}x{height}, {fps:.2f} fps)')
-print(f'Results: {len(rows)} frames, patient found in {found:.0%}')
-print(f'Overlay: {out_path} ({os.path.getsize(out_path) / 1e6:.1f} MB)')
-print('In VLC: open the video, then Subtitle > Add Subtitle File... and pick the overlay.')
+def main():
+    parser = argparse.ArgumentParser(description='Make a subtitle overlay (.ass) of the FaceDx results of one video, for VLC.')
+    parser.add_argument('--patient', required=True, help='Patient folder name, e.g. S24_217')
+    parser.add_argument('--video', required=True, help='Video file name (e.g. <file>.m2t, looked up in RAW_ROOT and MP4_ROOT) or its full path')
+    parser.add_argument('--config', default=DEFAULT_CONFIG, help='Settings file (default: local_settings.env in the repo folder)')
+    args = parser.parse_args()
+    settings = read_settings(args.config)
+
+    video_path, rows, emotions, aus, fps, width, height = load_results(args.patient, args.video, settings)
+    name = os.path.basename(video_path)
+    results_dir = results_path(args.patient, name, settings)
+
+    # Times from frame numbers and the real frame rate (the CSV timestamps use the rounded-up rate, e.g. 30 for 29.97)
+    step = rows['frame'].diff().median() if len(rows) > 1 else 1
+    times = list(rows['frame'] / fps) + [(rows['frame'].iloc[-1] + step) / fps]
+    font_size = round(height / 32)
+    records = [row for _, row in rows.iterrows()]
+    panel = merged_events(times, [panel_text(r, emotions, aus) for r in records])
+    boxes = merged_events(times, [face_box_text(r) for r in records])
+
+    margin = round(font_size * 0.8)
+    out_path = os.path.join(results_dir, os.path.splitext(name)[0] + '.ass')
+    with open(out_path + '.part', 'w') as file:
+        file.write('[Script Info]\nScriptType: v4.00+\n'
+                   f'PlayResX: {width}\nPlayResY: {height}\nScaledBorderAndShadow: yes\nWrapStyle: 2\n\n'
+                   '[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, '
+                   'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
+                   'Alignment, MarginL, MarginR, MarginV, Encoding\n'
+                   # Thin black outline around the text (no background box, which is slow to draw in VLC)
+                   f'Style: Panel,DejaVu Sans,{font_size},&H00E8EFF1,&H00E8EFF1,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{max(1, round(font_size / 16))},0,7,{margin},{margin},{margin},1\n'
+                   f'Style: Box,Sans,{font_size},&HFF000000,&HFF000000,&H00{FACE_BOX[2:-1]},&HFF000000,0,0,0,0,100,100,0,0,1,{max(2, round(height / 360))},0,7,0,0,0,1\n\n'
+                   '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n')
+        for start, end, text in boxes:
+            file.write(f'Dialogue: 0,{ass_time(start)},{ass_time(end)},Box,,0,0,0,,{text}\n')
+        for start, end, text in panel:
+            file.write(f'Dialogue: 1,{ass_time(start)},{ass_time(end)},Panel,,0,0,0,,{text}\n')
+    os.replace(out_path + '.part', out_path)
+
+    found = (rows['success'] == 1).mean()
+    print(f'Video:   {video_path} ({width}x{height}, {fps:.2f} fps)')
+    print(f'Results: {len(rows)} frames, patient found in {found:.0%}')
+    print(f'Overlay: {out_path} ({os.path.getsize(out_path) / 1e6:.1f} MB)')
+    print('In VLC: open the video, then Subtitle > Add Subtitle File... and pick the overlay.')
+
+
+if __name__ == '__main__':
+    main()
