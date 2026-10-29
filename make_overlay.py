@@ -59,26 +59,27 @@ def ass_time(seconds):
     return f'{h}:{m:02}:{s:02}.{cs:02}'
 
 
-def bar(value, width, height, colour):
-    # Inline drawing: filled part + empty part, always the same total width so the numbers after it line up
-    filled = round(min(max(value, 0), 1) * width)
-    parts = [(filled, colour), (width - filled, BAR_EMPTY)]
-    return ''.join(f'{{\\1c{c}\\p1}}m 0 0 l {w} 0 {w} {height} 0 {height}{{\\p0}}' for w, c in parts if w > 0) + f'{{\\1c{WHITE}}}'
+def bar(value, colour, length=10):
+    # Text bar of block characters, filled + empty, always the same length so the numbers after it line up.
+    # Plain text rather than drawn shapes: VLC drops frames when every update has many drawings to render.
+    filled = round(min(max(value, 0), 1) * length)
+    block = '\u2585'  # lower 5/8 block, so bars on consecutive lines don't touch; squeezed to half width
+    return (f'{{\\fscx50\\1c{colour}}}' + block * filled + f'{{\\1c{BAR_EMPTY}}}' + block * (length - filled)
+            + f'{{\\fscx100\\1c{WHITE}}}')
 
 
-def panel_text(row, emotions, aus, font_size):
+def panel_text(row, emotions, aus):
     status = STATUS.get(int(row['success']), 'Unknown')
     if row['success'] != 1:
         return status  # scores are 0 here, so there is nothing else to show
-    width, height = font_size * 4, round(font_size * 0.6)
     lines = [f'{{\\b1}}{status}{{\\b0}}  {{\\1c{MUTED}}}frame {int(row["frame"]):,}{{\\1c{WHITE}}}']
     lines.append(f'{{\\1c{MUTED}}}Emotions{{\\1c{WHITE}}}')
     top = row[emotions].astype(float).nlargest(TOP_EMOTIONS)
     for n, (name, value) in enumerate(top.items()):
-        lines.append(f'{bar(value, width, height, TOP_BAR if n == 0 else BAR)} {value:.2f}  {name}')
+        lines.append(f'{bar(value, TOP_BAR if n == 0 else BAR)} {value:.2f}  {name}')
     lines.append(f'{{\\1c{MUTED}}}Action units{{\\1c{WHITE}}}')
     for name, value in row[aus].astype(float).nlargest(TOP_AUS).items():
-        lines.append(f'{bar(value, width, height, BAR)} {value:.2f}  {name} {AU_NAMES[name]}')
+        lines.append(f'{bar(value, BAR)} {value:.2f}  {name} {AU_NAMES[name]}')
     return '\\N'.join(lines)
 
 
@@ -136,7 +137,7 @@ step = rows['frame'].diff().median() if len(rows) > 1 else 1
 times = list(rows['frame'] / fps) + [(rows['frame'].iloc[-1] + step) / fps]
 font_size = round(height / 32)
 records = [row for _, row in rows.iterrows()]
-panel = merged_events(times, [panel_text(r, emotions, aus, font_size) for r in records])
+panel = merged_events(times, [panel_text(r, emotions, aus) for r in records])
 boxes = merged_events(times, [face_box_text(r) for r in records])
 
 margin = round(font_size * 0.8)
@@ -147,8 +148,8 @@ with open(out_path + '.part', 'w') as file:
                '[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, '
                'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
                'Alignment, MarginL, MarginR, MarginV, Encoding\n'
-               # BorderStyle 3: semi-transparent box behind the text, in OutlineColour
-               f'Style: Panel,Sans,{font_size},&H00E8EFF1,&H00E8EFF1,&H60000000,&H60000000,0,0,0,0,100,100,0,0,3,{round(font_size * 0.3)},0,7,{margin},{margin},{margin},1\n'
+               # Thin black outline around the text (no background box, which is slow to draw in VLC)
+               f'Style: Panel,DejaVu Sans,{font_size},&H00E8EFF1,&H00E8EFF1,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{max(1, round(font_size / 16))},0,7,{margin},{margin},{margin},1\n'
                f'Style: Box,Sans,{font_size},&HFF000000,&HFF000000,&H00{FACE_BOX[2:-1]},&HFF000000,0,0,0,0,100,100,0,0,1,{max(2, round(height / 360))},0,7,0,0,0,1\n\n'
                '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n')
     for start, end, text in boxes:
