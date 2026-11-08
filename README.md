@@ -231,6 +231,18 @@ python play_results.py --patient S24_217 --video <file>.m2t --start 1:20:00
 Keys: space pause/play, left/right (or a/d) 10 s, down/up (or s/w) 1 min, q quit. Frames are numbered from their
 timestamps in the recording, so the overlay matches the CSV frame numbers exactly, also after a jump.
 
+**Jump between emotion episodes:** `--episodes` finds stretches of high-confidence Happiness and Sadness in all of
+the patient's finished videos, and n / p jump to the next / previous one (3 s before it starts, opening the right
+video). The rules are those of `detect_param` in
+[LZ-state-analysis](https://github.com/PrecisionNeuroLab/LZ-state-analysis/blob/main/fau/fau_emo_defs.py) at its
+strictest sweep level, from the face data only (`episodes.py`): P(emotion) above its 98th percentile over the
+patient's recording for >= 12 s, and the emotion's AUs >= 0.5 SD above a nearby sustained-Neutral baseline.
+
+```bash
+python play_results.py --patient S24_217 --episodes
+python play_results.py --patient S24_217 --episodes Happiness
+```
+
 `make_overlay.py` writes the same overlay as a subtitle file (`.ass`, up to about 20 MB per hour) next to the CSVs, for
 other video players. VLC breaks with it on `.m2t` recordings (the picture disappears and playback jumps), so use
 `play_results.py` for those.
