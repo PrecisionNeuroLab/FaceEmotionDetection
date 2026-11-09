@@ -223,7 +223,10 @@ frame (about 5 per second):
 | `outputs_confidence.csv` | how sure the face detection and patient match are: `face_score` (face detector's confidence, 0-1), `faces_found`, `patient_match` (`single face`: the only face in view, taken to be the patient without comparing it with the photos; `verified`: compared with the photos; `tracked`: nearest to the face verified just before) and `match_distance` (for `verified`: distance to the matching photo, lower = more alike, < 0.32 to match). Videos processed before this was added don't have it. |
 
 Each row has `frame`, `timestamp` (seconds from the start of the video) and `success`: `1` patient's face found,
-`0` no face, `-1` several faces and none verified as the patient. Scores are 0 when `success` is not 1.
+`0` no face, `-1` several faces and none verified as the patient, `-2` one face, not verified as the patient (e.g. a
+nurse alone in view). Scores are 0 when `success` is not 1. Every face is compared with the patient photos (then
+followed by position while it stays put); videos processed before this change took a lone face to be the patient
+without checking.
 With `--save-face-samples`, about 1% of the face crops matched to the patient are saved as `.jpg` to
 `<OUT_ROOT>/outputs_Combined_PatData/<patient>/` for checking the verification (none are saved by default); they are
 identifiable images, so keep them on the lab machine.

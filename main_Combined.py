@@ -145,7 +145,7 @@ Run_HSE = True
 Run_OpenGraphAU = True
 Do_Verification = True 
 Partial_Verify = True # Verify, then find nearest face within distance max (below)
-Verify_Every_Frame = False # Verify all frames, even if only 1 person is detected
+Verify_Every_Frame = True # Verify all frames, even if only 1 person is detected (else a lone nurse or visitor counts as the patient)
 VERIFY_THRESHOLD = 0.32 # Maximum distance threshold (below this, faces are deemed "verified")
 Face_Detector = 'MTCNN' # Options: ['MTCNN', 'RetinaFace']
 
