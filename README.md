@@ -246,6 +246,18 @@ python play_results.py --patient S24_217 --episodes
 python play_results.py --patient S24_217 --episodes Happiness
 ```
 
+**Desktop icon (double-click to open the episodes).** On the lab machine, logged in as the person who will use it, run
+this once from the shell where `play_results.py` works (with the same Python):
+
+```bash
+python make_launcher.py --patient S24_217
+```
+
+It puts an icon "FaceDx Happiness S24_217" on the desktop that runs
+`play_results.py --patient S24_217 --episodes Happiness` from this folder (add `--episodes Happiness Sadness` for
+both). A terminal window opens with it to show the progress, and stays open with the message if something goes wrong.
+If double-clicking only shows the file as text, right-click it > Allow Launching.
+
 `make_overlay.py` writes the same overlay as a subtitle file (`.ass`, up to about 20 MB per hour) next to the CSVs, for
 other video players. VLC breaks with it on `.m2t` recordings (the picture disappears and playback jumps), so use
 `play_results.py` for those.
