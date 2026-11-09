@@ -236,7 +236,7 @@ to its CSVs. If the frame count doesn't match the results (e.g. results made fro
 
 **Jump between emotion episodes:** `--episodes` finds stretches of high-confidence Happiness and Sadness in all of
 the patient's finished videos, and n / p jump to the next / previous one (3 s before it starts, opening the right
-video). The rules are those of `detect_param` in
+video), playing on to 3 s after it ends and then pausing (space plays on). The rules are those of `detect_param` in
 [LZ-state-analysis](https://github.com/PrecisionNeuroLab/LZ-state-analysis/blob/main/fau/fau_emo_defs.py) at its
 strictest sweep level, from the face data only (`episodes.py`): P(emotion) above its 98th percentile over the
 patient's recording for >= 12 s, and the emotion's AUs >= 0.5 SD above a nearby sustained-Neutral baseline.

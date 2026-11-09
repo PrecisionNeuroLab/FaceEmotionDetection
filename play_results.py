@@ -8,7 +8,8 @@ emotions and top 3 action units of each analysed frame (about 5 per second). Onl
     python play_results.py --patient S24_217 --episodes Happiness
 
 Keys: space pause/play, left/right (or a/d) 10 s back/forward, down/up (or s/w) 1 min back/forward, q quit.
-With --episodes (see episodes.py): n / p next / previous episode, across all of the patient's finished videos.
+With --episodes (see episodes.py): n / p next / previous episode, across all of the patient's finished videos. Each
+episode plays from 3 s before it to 3 s after it, then pauses (space plays on).
 Frames are numbered the way main_Combined.py numbers them: frame N is the N-th frame decoded from the start of the
 video. The first time a video is played, the player decodes it once to list the timestamp of every frame (saved as
 frame_times.npz next to its CSVs, about 2 MB per 2 hours), so that seeking and numbering need no fps arithmetic.
@@ -43,6 +44,7 @@ KEYS = {  # waitKeyEx codes differ between window backends (GTK/Qt on Linux, Coc
     'next_episode': {ord('n')}, 'previous_episode': {ord('p')},
 }
 EPISODE_LEAD_S = 3  # an episode jump starts this long before the episode
+EPISODE_TAIL_S = 3  # and pauses this long after it ends
 
 
 def probe(path):
@@ -338,10 +340,12 @@ def main():
         if not episodes and args.video is None:
             sys.exit('No episodes found.')
 
+    stop_at = None  # frame to pause at: a few seconds after the episode jumped to
     if args.video is None:
         video = Video(args.patient, episodes[0]['video'], settings, args.width)
         current = 0
         start_frame = episodes[0]['frame_start'] - round(EPISODE_LEAD_S * video.fps)
+        stop_at = episodes[0]['frame_end'] + round(EPISODE_TAIL_S * video.fps)
     else:
         video = Video(args.patient, args.video, settings, args.width)
         current = None
@@ -369,6 +373,8 @@ def main():
                 else:  # end of the video (or a jump past it): stay on the frame shown, paused
                     paused = True
                 need_frame = False
+                if stop_at is not None and frame >= stop_at:  # end of the episode clip: pause (space plays on)
+                    paused, stop_at = True, None
 
             episode_text = None
             if args.episodes is not None:
@@ -378,7 +384,8 @@ def main():
                     episode_text = f'Episode {inside[0] + 1}/{len(episodes)}: {e["emotion"]}, {e["seconds"]:.0f} s, mean P {e["p_mean"]:.2f}'
                 elif current is not None and episodes[current]['video'] == video.name:
                     e = episodes[current]
-                    when = (f'starts in {(e["frame_start"] - frame) / video.fps:.0f} s' if frame < e['frame_start'] else 'ended')
+                    when = (f'starts in {(e["frame_start"] - frame) / video.fps:.0f} s' if frame < e['frame_start']
+                            else 'ended' + (' (n next episode, space keep playing)' if paused else ''))
                     episode_text = f'Episode {current + 1}/{len(episodes)}: {e["emotion"]}, {when}'
                 else:
                     episode_text = f'{len(episodes)} episodes'
@@ -394,7 +401,7 @@ def main():
             for name, seconds in {'back': -10, 'forward': 10, 'back_min': -60, 'forward_min': 60}.items():
                 if key in KEYS[name]:
                     video.reader.seek(frame + round(seconds * video.fps))
-                    need_frame, current = True, None
+                    need_frame, current, stop_at = True, None, None
             for name, step in {'next_episode': 1, 'previous_episode': -1}.items():
                 if key in KEYS[name] and episodes:
                     k = episode_to_jump(episodes, videos, video, frame, current, step)
@@ -404,7 +411,8 @@ def main():
                         video.reader.close()
                         video = Video(args.patient, episodes[k]['video'], settings, args.width)
                     video.reader.seek(episodes[k]['frame_start'] - round(EPISODE_LEAD_S * video.fps))
-                    need_frame, current = True, k
+                    need_frame, current, paused = True, k, False
+                    stop_at = episodes[k]['frame_end'] + round(EPISODE_TAIL_S * video.fps)
             if key in KEYS['pause']:
                 paused = not paused
                 clock_start, clock_frame = time.monotonic(), frame + 1
