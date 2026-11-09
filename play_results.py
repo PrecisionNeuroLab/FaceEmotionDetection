@@ -175,7 +175,7 @@ def time_text(seconds):
 def draw(image, results, i, frame, fps, duration, scale, paused, episode_text=None):
     h = image.shape[0]
     s = h / 720  # sizes below are for a 720-pixel-high window
-    line, x0, y0 = round(24 * s), round(14 * s), round(14 * s)
+    line, x0, margin = round(24 * s), round(14 * s), round(14 * s)
     lines = []  # (text, colour, bar value or None, bar colour)
 
     success = results.success[i] if i is not None else None
@@ -202,7 +202,10 @@ def draw(image, results, i, frame, fps, duration, scale, paused, episode_text=No
     bar_w = round(90 * s)
     text_w = max(cv2.getTextSize(text, FONT, 0.55 * s, 1)[0][0] + (bar_w + round(10 * s) if value is not None else 0)
                  for text, _, value, _ in lines)
-    x1, y1 = min(image.shape[1], x0 + text_w + round(20 * s)), y0 + line * len(lines) + round(10 * s)
+    # In the bottom-left corner, clear of the face (the bottom edge stays put as the number of lines changes)
+    y1 = h - margin
+    y0 = max(0, y1 - line * len(lines) - round(10 * s))
+    x1 = min(image.shape[1], x0 + text_w + round(20 * s))
     region = image[y0:y1, x0:x1]
     region[:] = (region * 0.45).astype(np.uint8)
 
