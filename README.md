@@ -184,6 +184,14 @@ photos still go in `<MP4_ROOT>/S24_217_MP4/targetFace/`, and output folders are 
 python main_Combined.py --patient S24_217 --m2t --dry-run
 ```
 
+`.wmv` recordings work the same way with `--wmv` (all `.wmv` files under `RAW_ROOT/<patient>/`, read where they
+are); give `--m2t --wmv` for a patient with both. The episode rules take `.wmv` timestamps as real time (the x1.2045
+correction is only known for the NKT `.m2t` files).
+
+```bash
+python main_Combined.py --patient S24_217 --wmv --dry-run
+```
+
 **2. Add the patient photos** to `<MP4_ROOT>/S24_217_MP4/targetFace/`.
 
 **3. Check the folders and models, then test on one video:**

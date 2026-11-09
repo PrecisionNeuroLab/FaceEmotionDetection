@@ -44,8 +44,8 @@ def find_video(name, patient, settings):
     folders = [os.path.join(settings['MP4_ROOT'], f'{patient}_MP4')]
     if settings['RAW_ROOT']:
         folders.insert(0, os.path.join(settings['RAW_ROOT'], patient))
-    # Results of converted videos are named <file>.mp4: if that .mp4 is gone, play the raw <file>.m2t instead
-    names = [name] + ([os.path.splitext(name)[0] + '.m2t'] if name.lower().endswith('.mp4') else [])
+    # Results of converted videos are named <file>.mp4: if that .mp4 is gone, play the raw <file>.m2t (or .wmv) instead
+    names = [name] + ([os.path.splitext(name)[0] + ext for ext in ('.m2t', '.wmv')] if name.lower().endswith('.mp4') else [])
     for candidate in names:
         for folder in folders:
             for path, _, files in os.walk(folder):

@@ -12,10 +12,12 @@ used there (98th percentile, AU signature 0.5 SD), without its brain-data checks
     episode and >= 60 s from any episode of that emotion. An episode needs >= 5 baseline segments.
   - AU check: the mean z-score of the emotion's AUs (z over all usable segments) is >= 0.5 above its baseline.
 
-Real time = CSV timestamp x 1.2045: the recordings' timestamps run about 20% fast (LZ-state-analysis fau/README.md).
+Real time = CSV timestamp x 1.2045 for .m2t recordings (and .mp4 copies of them): their timestamps run about 20% fast
+(LZ-state-analysis fau/README.md). .wmv recordings are taken as real time (no correction known).
 """
 
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -38,6 +40,11 @@ BASELINE_MIN = 5
 SIGNATURE_AUS = sorted({au for aus in SIGNATURE.values() for au in aus})
 
 
+def time_scale(video):
+    # Real seconds per CSV second for a video (its results folder name)
+    return 1.0 if video.lower().endswith('.wmv') else REAL_TIME_SCALE
+
+
 def segments(results_dir):
     # One row per 4 s segment of the video (also segments without a usable face): mean emotion probabilities and
     # signature AUs over the usable frames, face_ok, and the first and last CSV frame of the segment
@@ -45,7 +52,7 @@ def segments(results_dir):
     ogau = pd.read_csv(os.path.join(results_dir, 'outputs_ogau.csv'), usecols=['frame'] + SIGNATURE_AUS)
     boxes = pd.read_csv(os.path.join(results_dir, 'outputs_bboxes.csv'), usecols=['frame', 'Facial Box W'])
     rows = hse.merge(ogau, on='frame').merge(boxes, on='frame')
-    segment = np.floor(rows['timestamp'] * REAL_TIME_SCALE / SEGMENT_S).astype(int)
+    segment = np.floor(rows['timestamp'] * time_scale(os.path.basename(os.path.normpath(results_dir))) / SEGMENT_S).astype(int)
     usable = (rows['success'] == 1) & (rows['Facial Box W'] >= MIN_BOX)
     columns = list(hse.columns[3:]) + SIGNATURE_AUS
     grid = rows[usable].groupby(segment[usable])[columns].mean()
@@ -84,6 +91,7 @@ def find_episodes(patient_dir, emotions=EMOTIONS, progress=None, grids=None):
             grids[video] = segments(os.path.join(patient_dir, video))
     if not grids:
         return [], {}
+    warnings.filterwarnings('ignore', 'Mean of empty slice', RuntimeWarning)  # videos without any usable face
     every = pd.concat(grids.values())
     ok = every['face_ok'].to_numpy()
     thresholds = {emo: float(np.nanquantile(every[emo].to_numpy()[ok], PERCENTILE / 100)) for emo in emotions}

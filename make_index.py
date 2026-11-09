@@ -6,11 +6,11 @@ looking at:
     python make_index.py --patient S24_217     (update only this patient's rows)
 
 Writes OUT_ROOT/FaceDx_index.csv (outside outputs_Combined, so nothing that lists the results folders sees it), one
-row per video: finished results, results still being processed, and raw .m2t recordings in RAW_ROOT/<patient>/ not
+row per video: finished results, results still being processed, and raw .m2t / .wmv recordings in RAW_ROOT/<patient>/ not
 processed yet. Only the CSVs are read (and the raw folder listed); nothing else is written.
 
 Columns of a finished video:
-  minutes             length of the video in real time (CSV timestamps x 1.2045, as in episodes.py)
+  minutes             length of the video in real time (CSV timestamps x 1.2045 for .m2t, as in episodes.py)
   patient_found_pct   analysed frames with the patient's face (success 1)
   no_face_pct         ... with no face found (success 0)
   other_face_pct      ... with a face that isn't the patient (success -1 / -2)
@@ -61,7 +61,7 @@ def video_row(patient, video, results_dir, grid):
     found = boxes['success'] == 1
     usable = int(grid['face_ok'].sum())
     row = {'patient': patient, 'video': video, 'status': 'finished',
-           'minutes': round(hse['timestamp'].max() * ep.REAL_TIME_SCALE / 60, 1) if len(hse) else 0.0,
+           'minutes': round(hse['timestamp'].max() * ep.time_scale(video) / 60, 1) if len(hse) else 0.0,
            'patient_found_pct': round(100 * (hse['success'] == 1).sum() / n, 1),
            'no_face_pct': round(100 * (hse['success'] == 0).sum() / n, 1),
            'other_face_pct': round(100 * hse['success'].isin([-1, -2]).sum() / n, 1),
@@ -73,12 +73,12 @@ def video_row(patient, video, results_dir, grid):
 
 
 def raw_videos(settings, patient):
-    # Names of the raw .m2t recordings of the patient (all subfolders of RAW_ROOT/<patient>/)
+    # Names of the raw .m2t and .wmv recordings of the patient (all subfolders of RAW_ROOT/<patient>/)
     if not settings['RAW_ROOT']:
         return set()
     names = set()
     for _, _, files in os.walk(os.path.join(settings['RAW_ROOT'], patient)):
-        names.update(f for f in files if f.lower().endswith('.m2t') and not f.startswith('.'))
+        names.update(f for f in files if f.lower().endswith(('.m2t', '.wmv')) and not f.startswith('.'))
     return names
 
 

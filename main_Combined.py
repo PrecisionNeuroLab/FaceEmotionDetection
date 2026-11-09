@@ -13,9 +13,11 @@ os.chdir(REPO_DIR)
 def create_parser():
     parser = argparse.ArgumentParser(description='FaceDx: emotions (HSEmotion) and action units (OpenGraphAU) for every video of one patient.')
     parser.add_argument('--patient', type=str, required=True,
-                        help='Patient folder name, e.g. S23_174 (videos in MP4_ROOT/S23_174_MP4/, or RAW_ROOT/S23_174/ with --m2t)')
+                        help='Patient folder name, e.g. S23_174 (videos in MP4_ROOT/S23_174_MP4/, or RAW_ROOT/S23_174/ with --m2t / --wmv)')
     parser.add_argument('--m2t', action='store_true',
                         help='Read the raw .m2t recordings in RAW_ROOT/<patient>/ (all subfolders) instead of converted .mp4 files')
+    parser.add_argument('--wmv', action='store_true',
+                        help='Read the .wmv recordings in RAW_ROOT/<patient>/ (all subfolders) instead of converted .mp4 files (can be combined with --m2t)')
     parser.add_argument('--device', type=str, default=None,
                         help='Device to use, e.g. cuda:0, cuda:1, cpu (default: cuda:0 if a GPU is found, else cpu)')
     parser.add_argument('--force-hse-cpu', action='store_true',
@@ -23,7 +25,7 @@ def create_parser():
     parser.add_argument('--config', type=str, default=DEFAULT_CONFIG,
                         help='Settings file (default: local_settings.env in the repo folder)')
     parser.add_argument('--video-dir', type=str, default=None,
-                        help='Folder with the .mp4 videos (default: MP4_ROOT/<patient>_MP4), or with --m2t the raw folder (default: RAW_ROOT/<patient>)')
+                        help='Folder with the .mp4 videos (default: MP4_ROOT/<patient>_MP4), or with --m2t / --wmv the raw folder (default: RAW_ROOT/<patient>)')
     parser.add_argument('--face-dir', type=str, default=None,
                         help='Folder with .jpg photos of the patient (default: MP4_ROOT/<patient>_MP4/targetFace, or <video-dir>/targetFace)')
     parser.add_argument('--save-face-samples', action='store_true',
@@ -35,15 +37,16 @@ def create_parser():
     return parser
 
 
-def list_videos(video_dir, m2t=False):
-    # {file name: path}. .mp4 files directly in video_dir, or .m2t files anywhere under it (raw recordings are in session subfolders)
-    if not m2t:
+def list_videos(video_dir, raw_extensions=()):
+    # {file name: path}. .mp4 files directly in video_dir, or files with raw_extensions (e.g. .m2t, .wmv) anywhere under
+    # it (raw recordings are in session subfolders)
+    if not raw_extensions:
         return {vid: os.path.join(video_dir, vid) for vid in os.listdir(video_dir) if not vid.startswith('.')
                 and vid.endswith('.mp4') and os.path.isfile(os.path.join(video_dir, vid))}
     paths = {}
     for path, _, files in os.walk(video_dir):
         for vid in files:
-            if vid.lower().endswith('.m2t') and not vid.startswith('.'):
+            if vid.lower().endswith(tuple(raw_extensions)) and not vid.startswith('.'):
                 paths.setdefault(vid, []).append(os.path.join(path, vid))
     # Outputs go into one folder per file name, so two recordings with the same name would mix
     clashes = {vid: found for vid, found in paths.items() if len(found) > 1}
@@ -66,12 +69,13 @@ settings = read_settings(args.config)
 # Main parameters
 PAT_NOW = args.patient
 MP4_DIRECTORY = os.path.join(settings['MP4_ROOT'], f'{PAT_NOW}_MP4')
-if args.m2t and not args.video_dir and not settings['RAW_ROOT']:
+RAW_EXTENSIONS = ['.m2t'] * args.m2t + ['.wmv'] * args.wmv  # raw recordings read where they are (none: .mp4 in MP4_ROOT)
+if RAW_EXTENSIONS and not args.video_dir and not settings['RAW_ROOT']:
     sys.exit(f'Set RAW_ROOT (folder with one raw folder per patient) in {args.config}, or pass --video-dir.')
-VIDEO_DIRECTORY = os.path.abspath(args.video_dir or (os.path.join(settings['RAW_ROOT'], PAT_NOW) if args.m2t else MP4_DIRECTORY))
+VIDEO_DIRECTORY = os.path.abspath(args.video_dir or (os.path.join(settings['RAW_ROOT'], PAT_NOW) if RAW_EXTENSIONS else MP4_DIRECTORY))
 # Photos are never looked for inside the raw folder
 SUBJECT_FACE_IMAGE_FOLDER = os.path.abspath(args.face_dir or os.path.join(
-    args.video_dir if args.video_dir and not args.m2t else MP4_DIRECTORY, 'targetFace'))
+    args.video_dir if args.video_dir and not RAW_EXTENSIONS else MP4_DIRECTORY, 'targetFace'))
 OUTPUT_DIRECTORY = os.path.abspath(os.path.join(settings['OUT_ROOT'], 'outputs_Combined', PAT_NOW))
 OUTPUT_DIRECTORY_PARTIAL_VERIFY = os.path.abspath(os.path.join(settings['OUT_ROOT'], 'outputs_Combined_PatData', PAT_NOW))
 os.environ.setdefault('DEEPFACE_HOME', settings['DEEPFACE_HOME'])
@@ -82,10 +86,10 @@ print(f'Patient photos: {SUBJECT_FACE_IMAGE_FOLDER}')
 print(f'Outputs:        {OUTPUT_DIRECTORY}')
 print(f'Face samples:   ' + (OUTPUT_DIRECTORY_PARTIAL_VERIFY if args.save_face_samples else 'not saved (--save-face-samples to save them)'))
 if not os.path.isdir(VIDEO_DIRECTORY):
-    sys.exit(f'Video folder not found: {VIDEO_DIRECTORY}\nSet {"RAW_ROOT" if args.m2t else "MP4_ROOT"} in {args.config}, or pass --video-dir.')
+    sys.exit(f'Video folder not found: {VIDEO_DIRECTORY}\nSet {"RAW_ROOT" if RAW_EXTENSIONS else "MP4_ROOT"} in {args.config}, or pass --video-dir.')
 patient_photos = [f for f in os.listdir(SUBJECT_FACE_IMAGE_FOLDER) if f.lower().endswith(('.jpg', '.jpeg'))] \
     if os.path.isdir(SUBJECT_FACE_IMAGE_FOLDER) else []
-video_paths = list_videos(VIDEO_DIRECTORY, m2t=args.m2t)
+video_paths = list_videos(VIDEO_DIRECTORY, RAW_EXTENSIONS)
 unprocessed_videos = list_unprocessed(video_paths, OUTPUT_DIRECTORY)[:args.limit]
 
 if args.dry_run:
