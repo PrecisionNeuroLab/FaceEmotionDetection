@@ -434,5 +434,12 @@ for i in unprocessed_videos:
   # print an update on the progress
   print("Approximately ", time_left_formatted, " left to complete analyzing all videos")
 
+# Update this patient's rows of the index of all videos (OUT_ROOT/FaceDx_index.csv, see make_index.py)
+try:
+  from make_index import update_index
+  update_index(settings, [PAT_NOW])
+except Exception as error:  # the results are saved either way
+  print(f'Could not update the index (run python make_index.py --patient {PAT_NOW}): {error}')
+
  
 

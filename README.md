@@ -265,6 +265,9 @@ python make_index.py
 python make_index.py --patient S24_217    # update only this patient's rows
 ```
 
+`main_Combined.py` updates its patient's rows by itself at the end of each run. Rows of other patients are never
+removed.
+
 **Desktop icon (double-click to open the episodes).** On the lab machine, logged in as the person who will use it, run
 this once from the shell where `play_results.py` works (with the same Python):
 

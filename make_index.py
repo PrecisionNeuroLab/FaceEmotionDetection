@@ -5,6 +5,8 @@ looking at:
     python make_index.py                       (all patients in OUT_ROOT/outputs_Combined)
     python make_index.py --patient S24_217     (update only this patient's rows)
 
+main_Combined.py also updates its patient's rows at the end of each run.
+
 Writes OUT_ROOT/FaceDx_index.csv (outside outputs_Combined, so nothing that lists the results folders sees it), one
 row per video: finished results, results still being processed, and raw .m2t / .wmv recordings in RAW_ROOT/<patient>/ not
 processed yet. Only the CSVs are read (and the raw folder listed); nothing else is written.
@@ -105,17 +107,14 @@ def patient_rows(patient, patient_dir, settings):
     return rows
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Write OUT_ROOT/FaceDx_index.csv: every video with how usable its results are.')
-    parser.add_argument('--patient', nargs='+', help='Only (re)index these patients; the other rows are kept')
-    parser.add_argument('--config', default=DEFAULT_CONFIG, help='Settings file (default: local_settings.env in the repo folder)')
-    args = parser.parse_args()
-    settings = read_settings(args.config)
-
+def update_index(settings, patients=None):
+    """(Re)write OUT_ROOT/FaceDx_index.csv: the rows of these patients, or of all patients with results. Rows of other
+    patients already in the index are always kept (also of patients whose results folder is gone).
+    Also run by main_Combined.py at the end of each run, for its patient."""
     results_root = os.path.join(settings['OUT_ROOT'], 'outputs_Combined')
     out_path = os.path.join(settings['OUT_ROOT'], 'FaceDx_index.csv')
-    patients = args.patient or sorted(p for p in os.listdir(results_root)
-                                      if not p.startswith('.') and os.path.isdir(os.path.join(results_root, p)))
+    if patients is None:
+        patients = sorted(p for p in os.listdir(results_root) if not p.startswith('.') and os.path.isdir(os.path.join(results_root, p)))
     rows = []
     for patient in patients:
         patient_dir = os.path.join(results_root, patient)
@@ -123,11 +122,13 @@ def main():
             print(f'{patient}: no results in {patient_dir}')
             continue
         rows += patient_rows(patient, patient_dir, settings)
+    redone = {row['patient'] for row in rows}
 
     index = pd.DataFrame(rows, columns=COLUMNS)
-    if args.patient and os.path.exists(out_path):
+    if os.path.exists(out_path):
         old = pd.read_csv(out_path)
-        index = pd.concat([old[~old['patient'].isin(patients)], index], ignore_index=True)
+        index = pd.concat([part for part in [old[~old['patient'].isin(redone)], index] if len(part)], ignore_index=True)
+        index = index.reindex(columns=COLUMNS)
     index = index.sort_values(['patient', 'video'], kind='stable')
     for col in ['happiness_episodes', 'sadness_episodes']:
         index[col] = index[col].astype('Int64')
@@ -138,6 +139,14 @@ def main():
     counts = ', '.join(f'{(done["quality"] == q).sum()} {q}' for q in ['good', 'fair', 'poor'])
     others = ', '.join(f'{n} {s}' for s, n in index['status'].value_counts().items() if s != 'finished')
     print(f'Wrote {out_path}: {len(done)} finished videos ({counts})' + (f', {others}' if others else ''))
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Write OUT_ROOT/FaceDx_index.csv: every video with how usable its results are.')
+    parser.add_argument('--patient', nargs='+', help='Only (re)index these patients; the other rows are kept')
+    parser.add_argument('--config', default=DEFAULT_CONFIG, help='Settings file (default: local_settings.env in the repo folder)')
+    args = parser.parse_args()
+    update_index(read_settings(args.config), args.patient)
 
 
 if __name__ == '__main__':
