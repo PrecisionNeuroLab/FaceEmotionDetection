@@ -20,6 +20,14 @@ Columns of a finished video:
   usable_pct          4 s segments usable for episodes (>= 12 frames with the patient's face >= 30 px), as in episodes.py
   usable_minutes      the same, in minutes of real time
   happiness_episodes, sadness_episodes   episodes found by episodes.py (thresholds over all of the patient's videos)
+  emotion_confidence  mean probability of the top emotion over the patient's frames (0.14 = no preference among the 7,
+                      1 = certain); the model's own certainty, not a measure of accuracy
+  emotion_margin      mean gap between the top two emotions' probabilities (low = often torn between two)
+  face_score          mean face-detection confidence (MTCNN, 0-1) of the patient's face   } from outputs_confidence.csv:
+  unchecked_pct       patient's frames with the only face in view, taken to be the patient }  only videos processed
+                      without comparing it with the photos (could be a nurse or visitor)   }  since this was added
+  match_distance      median VGG-Face distance of the faces compared with the photos       }
+                      (lower = more alike; < 0.32 counts as the patient)                   }
   quality             good: usable_pct >= 50 and median_face_px >= 60; fair: usable_pct >= 20; poor: less
   note                the main reason for a fair or poor rating
 """
@@ -37,7 +45,8 @@ GOOD_USABLE_PCT = 50
 GOOD_FACE_PX = 60
 FAIR_USABLE_PCT = 20
 COLUMNS = ['patient', 'video', 'status', 'quality', 'note', 'minutes', 'patient_found_pct', 'no_face_pct',
-           'other_face_pct', 'median_face_px', 'usable_pct', 'usable_minutes', 'happiness_episodes', 'sadness_episodes']
+           'other_face_pct', 'median_face_px', 'usable_pct', 'usable_minutes', 'happiness_episodes', 'sadness_episodes',
+           'emotion_confidence', 'emotion_margin', 'face_score', 'unchecked_pct', 'match_distance']
 
 
 def rate(row):
@@ -57,7 +66,7 @@ def rate(row):
 
 
 def video_row(patient, video, results_dir, grid):
-    hse = pd.read_csv(os.path.join(results_dir, 'outputs_hse.csv'), usecols=['timestamp', 'success'])
+    hse = pd.read_csv(os.path.join(results_dir, 'outputs_hse.csv'))
     boxes = pd.read_csv(os.path.join(results_dir, 'outputs_bboxes.csv'), usecols=['success', 'Facial Box W'])
     n = max(len(hse), 1)
     found = boxes['success'] == 1
@@ -70,6 +79,20 @@ def video_row(patient, video, results_dir, grid):
            'median_face_px': float(boxes.loc[found, 'Facial Box W'].median()) if found.any() else np.nan,
            'usable_pct': round(100 * usable / max(len(grid), 1), 1),
            'usable_minutes': round(usable * ep.SEGMENT_S / 60, 1)}
+    # The emotion model's certainty on the patient's frames (its 7 probabilities add up to 1)
+    scores = np.sort(hse.loc[hse['success'] == 1, hse.columns[3:]].to_numpy(float), axis=1)
+    row['emotion_confidence'] = round(float(scores[:, -1].mean()), 3) if len(scores) else np.nan
+    row['emotion_margin'] = round(float((scores[:, -1] - scores[:, -2]).mean()), 3) if len(scores) else np.nan
+    # Face detection and patient match confidence (outputs_confidence.csv, written by main_Combined.py since it was added)
+    row.update(face_score=np.nan, unchecked_pct=np.nan, match_distance=np.nan)
+    confidence_path = os.path.join(results_dir, 'outputs_confidence.csv')
+    if os.path.exists(confidence_path):
+        conf = pd.read_csv(confidence_path)
+        patient = conf[conf['success'] == 1]
+        if len(patient):
+            row['face_score'] = round(float(patient['face_score'].mean()), 3)
+            row['unchecked_pct'] = round(100 * float((patient['patient_match'] == 'single face').mean()), 1)
+            row['match_distance'] = round(float(patient['match_distance'].median()), 3) if patient['match_distance'].notna().any() else np.nan
     row['quality'], row['note'] = rate(row)
     return row
 

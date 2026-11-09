@@ -47,16 +47,17 @@ def convert_to_gpu_tensor(faces, device, FORCE_HSE_CPU=False):
 import concurrent.futures
 
 
-def detect_bboxes(frame, mtcnn, confidence_threshold=0.9):
-    # Detects bboxes of faces in one frame using MTCNN
+def detect_bboxes(frame, mtcnn, confidence_threshold=0.9, return_probs=False):
+    # Detects bboxes of faces in one frame using MTCNN (with return_probs, also MTCNN's confidence of each face)
 
     bounding_boxes, probs = mtcnn.detect(frame, landmarks=False)
     # If any faces detected, make sure they're confident!
     if bounding_boxes is None:
-        return np.array([]) # better to return empty array than None!
+        return (np.array([]), np.array([])) if return_probs else np.array([]) # better to return empty array than None!
     if bounding_boxes.shape[0] > 0:
-        bounding_boxes=bounding_boxes[probs>confidence_threshold]
-    return bounding_boxes
+        keep = probs > confidence_threshold
+        bounding_boxes, probs = bounding_boxes[keep], probs[keep]
+    return (bounding_boxes, probs) if return_probs else bounding_boxes
 
 
 def process_frame(frame, INPUT_SIZE, mtcnn):
@@ -117,8 +118,10 @@ def extract_faces_with_verify(frames, INPUT_SIZE, target_img_folder, mtcnn, part
     verification_indices = [] # Pool frames with >1 face and send to verification pipeline
     verification_bboxes = []
     all_bboxes = [] # Save the bboxes!
+    detections = [] # (boxes, MTCNN confidences) of each frame, for the confidence columns
     for enum, frame in enumerate(frames):
-        bounding_boxes = detect_bboxes(frame, mtcnn)
+        bounding_boxes, probs = detect_bboxes(frame, mtcnn, return_probs=True)
+        detections.append((bounding_boxes, probs))
         if bounding_boxes.shape[0] == 1: # frames with one face
             box = bounding_boxes[0].astype(int)
             x1,y1,x2,y2=box[0:4]    
@@ -194,10 +197,66 @@ def extract_faces_with_verify(frames, INPUT_SIZE, target_img_folder, mtcnn, part
                 faces[real_index] = face_img
                 is_null[real_index] = 0 # it's been verified, so it is not null
 
+    all_bboxes = add_confidence_columns(all_bboxes, detections, is_null, real_frame_numbers,
+                                        verify_results if len(verification_indices) > 0 else None, verification_indices)
     del verification_indices
     del verification_bboxes
     
     return faces, is_null, all_bboxes
+
+
+def add_confidence_columns(all_bboxes, detections, is_null, real_frame_numbers, verify_results, verification_indices):
+    # Adds to all_bboxes (one row per frame, 'Index' = frame number) how sure the detection and the patient match are:
+    #   Face Score      MTCNN's confidence (0-1) for the face used (the detected face nearest the final box), or for
+    #                   the most confident face if none was used; NaN if no face was detected
+    #   Faces Found     number of faces detected (confidence > 0.9)
+    #   Match           how the face was taken to be the patient's: 'single face' (the only face; not compared with the
+    #                   photos), 'verified' (compared with the photos), 'tracked' (nearest to the face verified in the
+    #                   frame before); '' if no face was used
+    #   Match Distance  for 'verified': VGG-Face distance to the matching photo (lower = more alike; < 0.32 to match)
+    how = {}
+    if verify_results is not None and verify_results.shape and verify_results.shape[0] > 0:
+        for _, row in verify_results.iterrows():
+            enum = verification_indices[int(row['Index'])]
+            how[enum] = ('tracked', np.nan) if row['Partial Verify'] else ('verified', float(row['Distance']))
+    boxes_by_frame = all_bboxes.set_index('Index')[['Facial Box X', 'Facial Box Y', 'Facial Box W', 'Facial Box H']]
+    score, found, match, distance = {}, {}, {}, {}
+    for enum, (boxes, probs) in enumerate(detections):
+        boxes = np.asarray(boxes, dtype=float).reshape(-1, 4) if len(boxes) else np.zeros((0, 4))
+        probs = np.asarray(probs, dtype=float).reshape(-1)  # MTCNN can give object arrays
+        frame = real_frame_numbers[enum]
+        found[frame] = int(boxes.shape[0])
+        used = is_null[enum] == 0
+        match[frame], distance[frame] = how.get(enum, ('single face', np.nan)) if used else ('', np.nan)
+        if not boxes.shape[0]:
+            score[frame] = np.nan
+        elif used and frame in boxes_by_frame.index:
+            x, y, w, h = boxes_by_frame.loc[frame].to_numpy(float).reshape(-1, 4)[0]
+            centres = np.column_stack([(boxes[:, 0] + boxes[:, 2]) / 2, (boxes[:, 1] + boxes[:, 3]) / 2])
+            score[frame] = float(probs[np.argmin(np.hypot(centres[:, 0] - (x + w / 2), centres[:, 1] - (y + h / 2)))])
+        else:
+            score[frame] = float(probs.max())
+    all_bboxes = all_bboxes.copy()
+    all_bboxes['Face Score'] = all_bboxes['Index'].map(score)
+    all_bboxes['Faces Found'] = all_bboxes['Index'].map(found)
+    all_bboxes['Match'] = all_bboxes['Index'].map(match)
+    all_bboxes['Match Distance'] = all_bboxes['Index'].map(distance)
+    return all_bboxes
+
+
+def csv_save_confidence(bboxes, is_null, frames, save_path, fps):
+    # outputs_confidence.csv: frame, timestamp, success (as in the other CSVs), then the columns of add_confidence_columns
+    columns = ['Face Score', 'Faces Found', 'Match', 'Match Distance']
+    if not all(c in bboxes.columns for c in columns) or frames.shape[0] == 0:
+        return
+    table = pd.DataFrame({'frame': frames.reshape(-1).astype(np.float32), 'timestamp': frames.reshape(-1).astype(np.float32) / fps,
+                          'success': 1 - np.asarray(is_null).reshape(-1)})
+    values = bboxes.set_index('Index').reindex(frames.reshape(-1))[columns].reset_index(drop=True)
+    table['face_score'] = values['Face Score'].round(4)
+    table['faces_found'] = values['Faces Found'].astype('Int64')
+    table['patient_match'] = values['Match'].fillna('')
+    table['match_distance'] = values['Match Distance'].round(4)
+    table.to_csv(save_path, mode='a', header=not os.path.exists(save_path), index=False)
 
 
 def draw_bbox_and_save(img, bbox, filepath):

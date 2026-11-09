@@ -220,6 +220,7 @@ frame (about 5 per second):
 | `outputs_hse.csv` | probabilities of Anger, Disgust, Fear, Happiness, Neutral, Sadness, Surprise |
 | `outputs_ogau.csv` | probabilities of 41 facial action units (AU1 ... AU39, plus left/right AUs) |
 | `outputs_bboxes.csv` | position and size of the patient's face |
+| `outputs_confidence.csv` | how sure the face detection and patient match are: `face_score` (face detector's confidence, 0-1), `faces_found`, `patient_match` (`single face`: the only face in view, taken to be the patient without comparing it with the photos; `verified`: compared with the photos; `tracked`: nearest to the face verified just before) and `match_distance` (for `verified`: distance to the matching photo, lower = more alike, < 0.32 to match). Videos processed before this was added don't have it. |
 
 Each row has `frame`, `timestamp` (seconds from the start of the video) and `success`: `1` patient's face found,
 `0` no face, `-1` several faces and none verified as the patient. Scores are 0 when `success` is not 1.
@@ -258,7 +259,10 @@ python play_results.py --patient S24_217 --episodes Happiness
 (finished, still processing, or raw `.m2t` not processed yet) and how usable its results are: % of frames with the
 patient's face, no face or another face, median face size, % of the video usable for episodes, usable minutes,
 Happiness / Sadness episode counts, and a `quality` tag: good (>= 50% usable and median face >= 60 px), fair
-(>= 20% usable) or poor, with a note on the main reason. It only reads the CSVs.
+(>= 20% usable) or poor, with a note on the main reason. It also has the models' own confidence per video: the
+emotion model's mean top probability and the gap to the second emotion, and (from `outputs_confidence.csv`) the mean
+face-detection score, the % of the patient's frames that were never compared with the photos (`unchecked_pct`) and the
+median match distance. It only reads the CSVs.
 
 ```bash
 python make_index.py

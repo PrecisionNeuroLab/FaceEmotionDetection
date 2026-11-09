@@ -222,6 +222,7 @@ for i in unprocessed_videos:
   save_path_hse = os.path.join(save_folder_now, f'outputs_hse.csv')
   save_path_ogau = os.path.join(save_folder_now, f'outputs_ogau.csv') 
   save_path_bboxes = os.path.join(save_folder_now, f'outputs_bboxes.csv') 
+  save_path_confidence = os.path.join(save_folder_now, f'outputs_confidence.csv')  # face detection / patient match confidence
 
   if TIMING_VERBOSE: 
     time1 = time.time()
@@ -315,6 +316,7 @@ for i in unprocessed_videos:
               if 'all_bboxes' in globals():
                 csv_save_bboxes(labels=all_bboxes[['Facial Box X', 'Facial Box Y', 'Facial Box W', 'Facial Box H']].values,  is_null=is_null, frames=frames, save_path=save_path_bboxes, fps=real_fps)
                 print(f"Saved Facial Bboxes CSV to {save_path_bboxes}!")
+                csv_save_confidence(all_bboxes, is_null=is_null, frames=frames, save_path=save_path_confidence, fps=real_fps)
               
               frame_now = frameNr
 
@@ -403,6 +405,7 @@ for i in unprocessed_videos:
           if 'all_bboxes' in globals():
             csv_save_bboxes(labels=all_bboxes[['Facial Box X', 'Facial Box Y', 'Facial Box W', 'Facial Box H']].values,  is_null=is_null, frames=frames, save_path=save_path_bboxes, fps=real_fps)
             print(f"Saved Facial Bboxes CSV to {save_path_bboxes}!")
+            csv_save_confidence(all_bboxes, is_null=is_null, frames=frames, save_path=save_path_confidence, fps=real_fps)
 
           frame_now = frameNr
 
