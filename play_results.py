@@ -1,6 +1,6 @@
 """
 Play a video with its FaceDx results drawn on top, in a window: the box around the patient's face and the top 4
-emotions and top 3 action units of each analysed frame (about 5 per second). Nothing is written to disk.
+emotions and top 3 action units of each analysed frame (about 5 per second). Only a list of frame timestamps is saved.
 
     python play_results.py --patient S24_217 --video <file>.m2t
     python play_results.py --patient S24_217 --video <file>.m2t --start 1:20:00
@@ -9,7 +9,9 @@ emotions and top 3 action units of each analysed frame (about 5 per second). Not
 
 Keys: space pause/play, left/right (or a/d) 10 s back/forward, down/up (or s/w) 1 min back/forward, q quit.
 With --episodes (see episodes.py): n / p next / previous episode, across all of the patient's finished videos.
-Frames are decoded with ffmpeg and counted from the start of the recording, so they match the CSV frame numbers.
+Frames are numbered the way main_Combined.py numbers them: frame N is the N-th frame decoded from the start of the
+video. The first time a video is played, the player decodes it once to list the timestamp of every frame (saved as
+frame_times.npz next to its CSVs, about 2 MB per 2 hours), so that seeking and numbering need no fps arithmetic.
 """
 
 import argparse
@@ -60,26 +62,92 @@ def passthrough_option():
     return ['-fps_mode', 'passthrough'] if test.returncode == 0 else ['-vsync', '0']
 
 
+def read_frame_times(stream, on_frame=None):
+    # Timestamps of the frames reported by ffmpeg's showinfo filter on stderr, in decoding output order
+    times = []
+    for line in stream:
+        match = re.search(rb' n: *\d+ .*pts_time: *([-\d.]+)', line)
+        if match:
+            times.append(float(match.group(1)))
+            if on_frame:
+                on_frame(len(times))
+    return times
+
+
+def frame_times(path, cache_path, passthrough, expected_frames):
+    # Timestamp of every frame of the video, decoded from the start with the same ffmpeg options as FrameReader:
+    # frame N of the CSVs (main_Combined.py counts decoded frames) is entry N. Cached in cache_path.
+    key = (os.path.basename(path), os.path.getsize(path))
+    try:
+        with np.load(cache_path) as cached:
+            if (str(cached['video']), int(cached['size'])) == key:
+                return cached['times']
+    except (OSError, KeyError, ValueError):
+        pass
+    print(f'Listing the frames of {key[0]} (only the first time this video is played)...')
+    proc = subprocess.Popen(['ffmpeg', '-hide_banner', '-nostdin', '-nostats', '-loglevel', 'info', '-copyts', '-i', path,
+                             '-an', '-sn', '-vf', 'showinfo', *passthrough, '-f', 'null', '-'],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    started = time.monotonic()
+    shown = [started]
+
+    def progress(n):
+        now = time.monotonic()
+        if now - shown[0] >= 1:
+            shown[0] = now
+            print(f'\r  {n:,} frames, about {min(n / max(expected_frames, 1), 1):.0%}, {now - started:.0f} s', end='', flush=True)
+
+    times = np.array(read_frame_times(proc.stderr, progress))
+    proc.wait()
+    print(f'\r  {len(times):,} frames in {time.monotonic() - started:.0f} s' + ' ' * 20)
+    if not len(times):
+        sys.exit(f'ffmpeg could not decode any frames of {path}')
+    try:
+        with open(cache_path + '.part', 'wb') as file:
+            np.savez(file, times=times, video=key[0], size=key[1])
+        os.replace(cache_path + '.part', cache_path)
+    except OSError as error:
+        print(f'  (could not save the frame list: {error})')
+    return times
+
+
 class FrameReader:
-    # Decodes the video with ffmpeg from a given frame on, scaled to the display size. Each frame is numbered from its
-    # timestamp (frame 0 = first video frame), the way main_Combined.py counts frames when it reads the whole video.
+    # Decodes the video with ffmpeg from a given frame on, scaled to the display size. Frames are numbered by finding
+    # their timestamp in the video's frame list (frame_times), so frame N is the N-th decoded frame, as in the CSVs.
     # Seeking in .m2t files is not exact (decoding can start without the keyframe it needs, giving broken frames), so
     # decoding starts SEEK_MARGIN seconds early and frames are skipped until the one asked for.
     SEEK_MARGIN = 5
 
-    def __init__(self, path, fps, size, video_start, file_start):
+    def __init__(self, path, fps, size, times, file_start, passthrough):
         self.path, self.fps, self.size = path, fps, size
-        self.video_start, self.file_start = video_start, file_start
+        self.times, self.file_start = times, file_start
+        self.order = np.argsort(times, kind='stable')
+        self.sorted_times = times[self.order]
+        self.tolerance = 0.25 / fps
         self.proc = None
-        self.target = 0
-        self.passthrough = passthrough_option()
+        self.target, self.last = 0, None
+        self.passthrough = passthrough
+
+    def frame_of(self, timestamp):
+        # Number of the frame with this timestamp: the one after the last frame read if it matches (so repeated
+        # timestamps are counted in order), else the matching frame nearest the one asked for, or None
+        nxt = None if self.last is None else self.last + 1
+        if nxt is not None and nxt < len(self.times) and abs(self.times[nxt] - timestamp) <= self.tolerance:
+            return nxt
+        lo = np.searchsorted(self.sorted_times, timestamp - self.tolerance, side='left')
+        hi = np.searchsorted(self.sorted_times, timestamp + self.tolerance, side='right')
+        if lo == hi:
+            return None
+        candidates = self.order[lo:hi]
+        return int(candidates[np.argmin(np.abs(candidates - self.target))])
 
     def seek(self, frame):
         self.close()
-        self.target = max(0, frame)
+        self.target, self.last = min(max(0, frame), len(self.times)), None
         # -ss counts from the start of the file; -copyts keeps the original timestamps; -noaccurate_seek passes on
-        # every frame from where decoding starts, so the skipping is done here, by timestamp
-        start = max(0.0, self.video_start - self.file_start + self.target / self.fps - self.SEEK_MARGIN)
+        # every frame from where decoding starts, so the skipping is done here, by frame number
+        at = self.times[min(self.target, len(self.times) - 1)]
+        start = max(0.0, at - self.file_start - self.SEEK_MARGIN)
         w, h = self.size
         self.proc = subprocess.Popen(
             ['ffmpeg', '-hide_banner', '-nostats', '-loglevel', 'info', '-copyts', '-noaccurate_seek',
@@ -108,7 +176,10 @@ class FrameReader:
             timestamp = self.timestamps.get(timeout=10)
             if timestamp is None:
                 return None
-            frame = round((timestamp - self.video_start) * self.fps)
+            frame = self.frame_of(timestamp)
+            if frame is None:
+                continue
+            self.last = frame
             if frame >= self.target:
                 self.target = frame + 1
                 return frame, np.frombuffer(data, np.uint8).reshape(h, w, 3).copy()
@@ -146,12 +217,20 @@ class Video:
         self.name = results_name(patient, name, settings)  # as in the episode list
         self.results = Results(rows, emotions, aus)
         video_start, file_start, self.duration = probe(self.path)
+        passthrough = passthrough_option()
+        times = frame_times(self.path, os.path.join(results_path(patient, self.name, settings), 'frame_times.npz'),
+                            passthrough, self.duration * self.fps)
         display_w = min(max_width, width)
         display_h = round(height * display_w / width / 2) * 2
         self.scale = display_w / width
-        self.reader = FrameReader(self.path, self.fps, (display_w, display_h), video_start, file_start)
-        print(f'Video:   {self.path} ({width}x{height}, {self.fps:.2f} fps, {time_text(self.duration)})')
+        self.reader = FrameReader(self.path, self.fps, (display_w, display_h), times, file_start, passthrough)
+        print(f'Video:   {self.path} ({width}x{height}, {self.fps:.2f} fps, {time_text(self.duration)}, {len(times):,} frames)')
         print(f'Results: {len(rows)} frames, patient found in {(rows["success"] == 1).mean():.0%}')
+        # main_Combined.py analyses every step-th frame up to the last one it decodes, so its last analysed frame
+        # is within one step of the end: anything else means it decoded this file differently
+        if len(rows) and not 0 < len(times) - rows['frame'].iloc[-1] <= self.results.step:
+            print(f'WARNING: this video has {len(times):,} frames but the results end at frame {rows["frame"].iloc[-1]:,}, '
+                  'so they may not line up with the picture (were they made from a different file, e.g. a converted .mp4?)')
 
 
 def episode_to_jump(episodes, videos, video, frame, current, step):
@@ -229,7 +308,7 @@ def parse_time(text):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Play a video with its FaceDx results drawn on top (writes nothing).')
+    parser = argparse.ArgumentParser(description='Play a video with its FaceDx results drawn on top.')
     parser.add_argument('--patient', required=True, help='Patient folder name, e.g. S24_217')
     parser.add_argument('--video', help='Video file name (e.g. <file>.m2t, looked up in RAW_ROOT and MP4_ROOT) or its full path '
                                         '(optional with --episodes: default the video of the first episode)')

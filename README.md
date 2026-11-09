@@ -221,15 +221,18 @@ identifiable images, so keep them on the lab machine.
 
 **Watch the results on the video.** `play_results.py` plays the original recording in a window with the results
 drawn on top: a box around the patient's face and the top 4 emotions and top 3 action units of each analysed frame.
-Nothing is written to disk. It needs a screen on the lab machine (or X forwarding) and `ffmpeg`.
+It needs a screen on the lab machine (or X forwarding) and `ffmpeg`.
 
 ```bash
 python play_results.py --patient S24_217 --video <file>.m2t
 python play_results.py --patient S24_217 --video <file>.m2t --start 1:20:00
 ```
 
-Keys: space pause/play, left/right (or a/d) 10 s, down/up (or s/w) 1 min, q quit. Frames are numbered from their
-timestamps in the recording, so the overlay matches the CSV frame numbers exactly, also after a jump.
+Keys: space pause/play, left/right (or a/d) 10 s, down/up (or s/w) 1 min, q quit. Frames are numbered the way the
+processing numbered them (frame N = the N-th decoded frame), so the overlay matches the CSVs exactly, also after a jump
+and across gaps in the recording's timestamps. For that, the first time a video is played it is decoded once to list
+every frame's timestamp (a few minutes for a long recording), saved as `frame_times.npz` (about 2 MB per 2 hours) next
+to its CSVs. If the frame count doesn't match the results (e.g. results made from a converted .mp4), it says so.
 
 **Jump between emotion episodes:** `--episodes` finds stretches of high-confidence Happiness and Sadness in all of
 the patient's finished videos, and n / p jump to the next / previous one (3 s before it starts, opening the right
