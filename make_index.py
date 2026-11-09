@@ -9,9 +9,10 @@ main_Combined.py also updates its patient's rows at the end of each run.
 
 Writes OUT_ROOT/FaceDx_index.csv (outside outputs_Combined, so nothing that lists the results folders sees it), one
 row per video: finished results, results still being processed, and raw .m2t / .wmv recordings in RAW_ROOT/<patient>/ not
-processed yet. Only the CSVs are read (and the raw folder listed); nothing else is written.
+processed yet. Only the CSVs are read, the raw and MP4 folders listed and the videos' size read; nothing else is written.
 
 Columns of a finished video:
+  resolution          width x height of the video in pixels (from the video file; empty if it isn't found)
   minutes             length of the video in real time (CSV timestamps x 1.2045 for .m2t, as in episodes.py)
   patient_found_pct   analysed frames with the patient's face (success 1)
   no_face_pct         ... with no face found (success 0)
@@ -35,6 +36,7 @@ Columns of a finished video:
 import argparse
 import os
 
+import cv2
 import numpy as np
 import pandas as pd
 
@@ -44,7 +46,7 @@ from facedx_settings import DEFAULT_CONFIG, read_settings
 GOOD_USABLE_PCT = 50
 GOOD_FACE_PX = 60
 FAIR_USABLE_PCT = 20
-COLUMNS = ['patient', 'video', 'status', 'quality', 'note', 'minutes', 'patient_found_pct', 'no_face_pct',
+COLUMNS = ['patient', 'video', 'status', 'quality', 'note', 'resolution', 'minutes', 'patient_found_pct', 'no_face_pct',
            'other_face_pct', 'median_face_px', 'usable_pct', 'usable_minutes', 'happiness_episodes', 'sadness_episodes',
            'emotion_confidence', 'emotion_margin', 'face_score', 'unchecked_pct', 'match_distance']
 
@@ -97,6 +99,20 @@ def video_row(patient, video, results_dir, grid):
     return row
 
 
+def video_files(settings, patient):
+    # {file name: path} of the patient's videos in RAW_ROOT/<patient>/ and MP4_ROOT/<patient>_MP4/ (all subfolders;
+    # a name in both: the raw one)
+    folders = [os.path.join(settings['MP4_ROOT'], f'{patient}_MP4')] if settings['MP4_ROOT'] else []
+    if settings['RAW_ROOT']:
+        folders.append(os.path.join(settings['RAW_ROOT'], patient))
+    paths = {}
+    for folder in folders:
+        for path, _, files in os.walk(folder):
+            paths.update((f, os.path.join(path, f)) for f in files
+                         if f.lower().endswith(('.m2t', '.wmv', '.mp4')) and not f.startswith('.'))
+    return paths
+
+
 def raw_videos(settings, patient):
     # Names of the raw .m2t and .wmv recordings of the patient (all subfolders of RAW_ROOT/<patient>/)
     if not settings['RAW_ROOT']:
@@ -105,6 +121,20 @@ def raw_videos(settings, patient):
     for _, _, files in os.walk(os.path.join(settings['RAW_ROOT'], patient)):
         names.update(f for f in files if f.lower().endswith(('.m2t', '.wmv')) and not f.startswith('.'))
     return names
+
+
+def resolution(video, paths):
+    # 'WIDTHxHEIGHT' of a video (a results folder name, or a raw file name), or '' if its file isn't found.
+    # Results of converted videos are named <file>.mp4: if that .mp4 is gone, the raw <file>.m2t / .wmv is read.
+    stem = os.path.splitext(video)[0]
+    for name in [video, stem + '.m2t', stem + '.wmv']:
+        if name in paths:
+            capture = cv2.VideoCapture(paths[name])
+            width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            capture.release()
+            if width and height:
+                return f'{width}x{height}'
+    return ''
 
 
 def patient_rows(patient, patient_dir, settings):
@@ -127,6 +157,9 @@ def patient_rows(patient, patient_dir, settings):
     have = {os.path.splitext(v)[0] for v in finished + processing}
     rows += [{'patient': patient, 'video': v, 'status': 'not processed'}
              for v in sorted(raw_videos(settings, patient)) if os.path.splitext(v)[0] not in have]
+    paths = video_files(settings, patient)
+    for row in rows:
+        row['resolution'] = resolution(row['video'], paths)
     return rows
 
 

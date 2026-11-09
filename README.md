@@ -259,13 +259,13 @@ python play_results.py --patient S24_217 --episodes Happiness
 ```
 
 **Index of all videos.** `make_index.py` writes `OUT_ROOT/FaceDx_index.csv` with one row per video of every patient
-(finished, still processing, or raw `.m2t` not processed yet) and how usable its results are: % of frames with the
+(finished, still processing, or raw `.m2t` not processed yet) and how usable its results are: the video's resolution, % of frames with the
 patient's face, no face or another face, median face size, % of the video usable for episodes, usable minutes,
 Happiness / Sadness episode counts, and a `quality` tag: good (>= 50% usable and median face >= 60 px), fair
 (>= 20% usable) or poor, with a note on the main reason. It also has the models' own confidence per video: the
 emotion model's mean top probability and the gap to the second emotion, and (from `outputs_confidence.csv`) the mean
 face-detection score, the % of the patient's frames that were never compared with the photos (`unchecked_pct`) and the
-median match distance. It only reads the CSVs.
+median match distance. It only reads the CSVs and the videos' size.
 
 ```bash
 python make_index.py
