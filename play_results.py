@@ -11,8 +11,9 @@ Keys: space pause/play, left/right (or a/d) 10 s back/forward, down/up (or s/w) 
 With --episodes (see episodes.py): n / p next / previous episode, across all of the patient's finished videos. Each
 episode plays from 3 s before it to 3 s after it, then pauses (space plays on).
 Frames are numbered the way main_Combined.py numbers them: frame N is the N-th frame decoded from the start of the
-video. The first time a video is played, the player decodes it once to list the timestamp of every frame (saved as
-frame_times.npz next to its CSVs, about 2 MB per 2 hours), so that seeking and numbering need no fps arithmetic.
+video. The first time a video is played, the player lists the timestamp of every frame from the file's packets (seconds;
+or by decoding the whole video if they don't fit the results), saved as frame_times.npz next to its CSVs (about 2 MB
+per 2 hours), so that seeking and numbering need no fps arithmetic.
 """
 
 import argparse
@@ -76,17 +77,30 @@ def read_frame_times(stream, on_frame=None):
     return times
 
 
-def frame_times(path, cache_path, passthrough, expected_frames):
-    # Timestamp of every frame of the video, decoded from the start with the same ffmpeg options as FrameReader:
-    # frame N of the CSVs (main_Combined.py counts decoded frames) is entry N. Cached in cache_path.
-    key = (os.path.basename(path), os.path.getsize(path))
+def packet_frame_times(path, passthrough):
+    # Frame timestamps from the video packets, without decoding (seconds for a long recording): the packets'
+    # presentation times in order, from the first frame the decoder outputs (frames before the first keyframe are
+    # dropped). None if the packets can't be used this way (missing or non-increasing timestamps).
+    out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'packet=pts_time,dts_time',
+                          '-of', 'csv=p=0', path], capture_output=True, text=True)
     try:
-        with np.load(cache_path) as cached:
-            if (str(cached['video']), int(cached['size'])) == key:
-                return cached['times']
-    except (OSError, KeyError, ValueError):
-        pass
-    print(f'Listing the frames of {key[0]} (only the first time this video is played)...')
+        packets = np.array([[float(v) for v in line.split(',')[:2]] for line in out.stdout.split()])
+    except ValueError:  # N/A timestamps
+        return None
+    if out.returncode or not len(packets) or not np.all(np.diff(packets[:, 1]) > 0):
+        return None
+    first = subprocess.run(['ffmpeg', '-hide_banner', '-nostdin', '-nostats', '-loglevel', 'info', '-copyts', '-i', path,
+                            '-an', '-sn', '-vf', 'showinfo', *passthrough, '-frames:v', '1', '-f', 'null', '-'],
+                           capture_output=True)
+    first_time = read_frame_times(first.stderr.splitlines())
+    if not first_time:
+        return None
+    times = np.sort(packets[:, 0])
+    return times[times >= first_time[0] - 1e-4]
+
+
+def decoded_frame_times(path, passthrough, expected_frames):
+    # Frame timestamps from decoding the whole video with the same ffmpeg options as FrameReader (minutes)
     proc = subprocess.Popen(['ffmpeg', '-hide_banner', '-nostdin', '-nostats', '-loglevel', 'info', '-copyts', '-i', path,
                              '-an', '-sn', '-vf', 'showinfo', *passthrough, '-f', 'null', '-'],
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -102,6 +116,25 @@ def frame_times(path, cache_path, passthrough, expected_frames):
     times = np.array(read_frame_times(proc.stderr, progress))
     proc.wait()
     print(f'\r  {len(times):,} frames in {time.monotonic() - started:.0f} s' + ' ' * 20)
+    return times
+
+
+def frame_times(path, cache_path, passthrough, expected_frames, fits_results):
+    # Timestamp of every frame of the video: frame N of the CSVs (main_Combined.py counts decoded frames) is entry N.
+    # From the packets if their count fits the results (fits_results(count)), else by decoding the whole video.
+    # Cached in cache_path.
+    key = (os.path.basename(path), os.path.getsize(path))
+    try:
+        with np.load(cache_path) as cached:
+            if (str(cached['video']), int(cached['size'])) == key:
+                return cached['times']
+    except (OSError, KeyError, ValueError):
+        pass
+    print(f'Listing the frames of {key[0]} (only the first time this video is played)...')
+    times = packet_frame_times(path, passthrough)
+    if times is None or not fits_results(len(times)):
+        print('  The video packets do not give the frames exactly, so decoding the whole video (once):')
+        times = decoded_frame_times(path, passthrough, expected_frames)
     if not len(times):
         sys.exit(f'ffmpeg could not decode any frames of {path}')
     try:
@@ -220,18 +253,20 @@ class Video:
         self.results = Results(rows, emotions, aus)
         video_start, file_start, self.duration = probe(self.path)
         passthrough = passthrough_option()
+        # main_Combined.py analyses every step-th frame up to the last one it decodes, so its last analysed frame
+        # is within one step of the end: anything else means it decoded this file differently
+        last, step = (rows['frame'].iloc[-1] if len(rows) else -1), self.results.step
+        fits = lambda count: 0 < count - last <= step
         times = frame_times(self.path, os.path.join(results_path(patient, self.name, settings), 'frame_times.npz'),
-                            passthrough, self.duration * self.fps)
+                            passthrough, self.duration * self.fps, fits)
         display_w = min(max_width, width)
         display_h = round(height * display_w / width / 2) * 2
         self.scale = display_w / width
         self.reader = FrameReader(self.path, self.fps, (display_w, display_h), times, file_start, passthrough)
         print(f'Video:   {self.path} ({width}x{height}, {self.fps:.2f} fps, {time_text(self.duration)}, {len(times):,} frames)')
         print(f'Results: {len(rows)} frames, patient found in {(rows["success"] == 1).mean():.0%}')
-        # main_Combined.py analyses every step-th frame up to the last one it decodes, so its last analysed frame
-        # is within one step of the end: anything else means it decoded this file differently
-        if len(rows) and not 0 < len(times) - rows['frame'].iloc[-1] <= self.results.step:
-            print(f'WARNING: this video has {len(times):,} frames but the results end at frame {rows["frame"].iloc[-1]:,}, '
+        if len(rows) and not fits(len(times)):
+            print(f'WARNING: this video has {len(times):,} frames but the results end at frame {last:,}, '
                   'so they may not line up with the picture (were they made from a different file, e.g. a converted .mp4?)')
 
 
