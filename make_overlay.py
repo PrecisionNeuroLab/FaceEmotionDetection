@@ -44,11 +44,14 @@ def find_video(name, patient, settings):
     folders = [os.path.join(settings['MP4_ROOT'], f'{patient}_MP4')]
     if settings['RAW_ROOT']:
         folders.insert(0, os.path.join(settings['RAW_ROOT'], patient))
-    for folder in folders:
-        for path, _, files in os.walk(folder):
-            if name in files:
-                return os.path.join(path, name)
-    sys.exit(f'Video {name} not found in: ' + ', '.join(folders) + '\nGive the full path of the video instead.')
+    # Results of converted videos are named <file>.mp4: if that .mp4 is gone, play the raw <file>.m2t instead
+    names = [name] + ([os.path.splitext(name)[0] + '.m2t'] if name.lower().endswith('.mp4') else [])
+    for candidate in names:
+        for folder in folders:
+            for path, _, files in os.walk(folder):
+                if candidate in files:
+                    return os.path.join(path, candidate)
+    sys.exit(f'Video {" or ".join(names)} not found in: ' + ', '.join(folders) + '\nGive the full path of the video instead.')
 
 
 def ass_time(seconds):
@@ -107,10 +110,20 @@ def results_path(patient, name, settings):
     return os.path.join(settings['OUT_ROOT'], 'outputs_Combined', patient, name)
 
 
+def results_name(patient, video, settings):
+    # Name of the video's results folder: the file name, or <file>.mp4 for a raw <file>.m2t whose converted .mp4
+    # was processed
+    name = os.path.basename(video)
+    mp4 = os.path.splitext(name)[0] + '.mp4'
+    if not os.path.isdir(results_path(patient, name, settings)) and os.path.isdir(results_path(patient, mp4, settings)):
+        return mp4
+    return name
+
+
 def load_results(patient, video, settings):
     # The video's path, its CSV rows merged on frame (sorted), the emotion and AU columns, and its fps and size
     video_path = find_video(video, patient, settings)
-    name = os.path.basename(video_path)
+    name = results_name(patient, video, settings)
     results_dir = results_path(patient, name, settings)
     if not os.path.isdir(results_dir):
         sys.exit(f'No finished results for {name} in {results_dir}' +
@@ -142,7 +155,7 @@ def main():
     settings = read_settings(args.config)
 
     video_path, rows, emotions, aus, fps, width, height = load_results(args.patient, args.video, settings)
-    name = os.path.basename(video_path)
+    name = results_name(args.patient, args.video, settings)
     results_dir = results_path(args.patient, name, settings)
 
     # Times from frame numbers and the real frame rate (the CSV timestamps use the rounded-up rate, e.g. 30 for 29.97)

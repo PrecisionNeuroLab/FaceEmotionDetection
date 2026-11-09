@@ -27,7 +27,7 @@ import numpy as np
 
 from facedx_settings import DEFAULT_CONFIG, read_settings
 import episodes as ep
-from make_overlay import AU_NAMES, STATUS, TOP_AUS, TOP_EMOTIONS, load_results, results_path
+from make_overlay import AU_NAMES, STATUS, TOP_AUS, TOP_EMOTIONS, load_results, results_name, results_path
 
 # OpenCV colours are (B, G, R)
 WHITE, MUTED = (241, 239, 232), (169, 178, 180)
@@ -143,7 +143,7 @@ class Video:
     # One video with its results, opened for playing at a given window width
     def __init__(self, patient, name, settings, max_width):
         self.path, rows, emotions, aus, self.fps, width, height = load_results(patient, name, settings)
-        self.name = os.path.basename(self.path)
+        self.name = results_name(patient, name, settings)  # as in the episode list
         self.results = Results(rows, emotions, aus)
         video_start, file_start, self.duration = probe(self.path)
         display_w = min(max_width, width)
