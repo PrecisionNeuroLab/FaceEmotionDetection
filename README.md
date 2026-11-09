@@ -246,6 +246,17 @@ python play_results.py --patient S24_217 --episodes
 python play_results.py --patient S24_217 --episodes Happiness
 ```
 
+**Index of all videos.** `make_index.py` writes `OUT_ROOT/FaceDx_index.csv` with one row per video of every patient
+(finished, still processing, or raw `.m2t` not processed yet) and how usable its results are: % of frames with the
+patient's face, no face or another face, median face size, % of the video usable for episodes, usable minutes,
+Happiness / Sadness episode counts, and a `quality` tag: good (>= 50% usable and median face >= 60 px), fair
+(>= 20% usable) or poor, with a note on the main reason. It only reads the CSVs.
+
+```bash
+python make_index.py
+python make_index.py --patient S24_217    # update only this patient's rows
+```
+
 **Desktop icon (double-click to open the episodes).** On the lab machine, logged in as the person who will use it, run
 this once from the shell where `play_results.py` works (with the same Python):
 

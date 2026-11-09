@@ -71,15 +71,17 @@ def finished_videos(patient_dir):
                   and os.path.exists(os.path.join(patient_dir, v, 'outputs_bboxes.csv')))
 
 
-def find_episodes(patient_dir, emotions=EMOTIONS, progress=None):
+def find_episodes(patient_dir, emotions=EMOTIONS, progress=None, grids=None):
     """Episodes of every finished video in patient_dir (OUT_ROOT/outputs_Combined/<patient>), sorted by video and
-    frame: dicts with video, emotion, frame_start, frame_end, seconds, mean P(emotion); plus the P thresholds."""
+    frame: dicts with video, emotion, frame_start, frame_end, seconds, mean P(emotion); plus the P thresholds.
+    grids: the videos' segments() if already read."""
     videos = finished_videos(patient_dir)
-    grids = {}
-    for n, video in enumerate(videos, 1):
-        if progress:
-            progress(n, len(videos))
-        grids[video] = segments(os.path.join(patient_dir, video))
+    if grids is None:
+        grids = {}
+        for n, video in enumerate(videos, 1):
+            if progress:
+                progress(n, len(videos))
+            grids[video] = segments(os.path.join(patient_dir, video))
     if not grids:
         return [], {}
     every = pd.concat(grids.values())
