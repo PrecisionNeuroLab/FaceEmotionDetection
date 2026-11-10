@@ -221,8 +221,9 @@ frame (about 5 per second):
 | `outputs_ogau.csv` | probabilities of 41 facial action units (AU1 ... AU39, plus left/right AUs) |
 | `outputs_bboxes.csv` | position and size of the patient's face |
 | `outputs_confidence.csv` | how sure the face detection and patient match are: `face_score` (face detector's confidence, 0-1), `faces_found`, `patient_match` (`single face`: the only face in view, taken to be the patient without comparing it with the photos; `verified`: compared with the photos; `tracked`: nearest to the face verified just before) and `match_distance` (for `verified`: distance to the matching photo, lower = more alike, < 0.32 to match). Videos processed before this was added don't have it. |
+| `outputs_frame_times.csv` | the time of each analysed frame as stored in the video file, for lining the results up with iEEG: `frame`, `timestamp` (as in the other CSVs), `video_time` (seconds since the video's first frame) and `pts` (the file's own timestamp, which often doesn't start at 0). Use `video_time` rather than `timestamp`: it follows the file's own clock, so it stays right after dropped frames or gaps in the recording (`timestamp` assumes a steady frame rate). Whether `.m2t` times still need the 1.2045 correction then is worth checking against an event seen in both the video and the iEEG. Needs ffmpeg; for older results run `python make_frame_times.py --patient S24_217` (seconds per video, the other CSVs are not changed). |
 
-Each row has `frame`, `timestamp` (seconds from the start of the video) and `success`: `1` patient's face found,
+Each row has `frame` (the N-th frame decoded from the start of the video), `timestamp` (frame / fps rounded up: an estimate, see `outputs_frame_times.csv`) and `success`: `1` patient's face found,
 `0` no face, `-1` several faces and none verified as the patient, `-2` one face, not verified as the patient (e.g. a
 nurse alone in view). Scores are 0 when `success` is not 1. Every face is compared with the patient photos (then
 followed by position while it stays put); videos processed before this change took a lone face to be the patient

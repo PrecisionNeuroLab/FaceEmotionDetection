@@ -17,7 +17,6 @@ per 2 hours), so that seeking and numbering need no fps arithmetic.
 """
 
 import argparse
-import json
 import os
 import queue
 import re
@@ -32,6 +31,7 @@ import numpy as np
 from facedx_settings import DEFAULT_CONFIG, read_settings
 import episodes as ep
 from make_overlay import AU_NAMES, STATUS, TOP_AUS, TOP_EMOTIONS, load_results, results_name, results_path
+from video_times import CACHE_NAME, fits_results, frame_times, passthrough_option, probe
 
 # OpenCV colours are (B, G, R)
 WHITE, MUTED = (241, 239, 232), (169, 178, 180)
@@ -46,104 +46,6 @@ KEYS = {  # waitKeyEx codes differ between window backends (GTK/Qt on Linux, Coc
 }
 EPISODE_LEAD_S = 3  # an episode jump starts this long before the episode
 EPISODE_TAIL_S = 3  # and pauses this long after it ends
-
-
-def probe(path):
-    # Start times (seconds) of the video stream and of the file, and the duration
-    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=start_time,duration:stream=start_time',
-                          '-select_streams', 'v:0', '-of', 'json', path], capture_output=True, text=True, check=True)
-    info = json.loads(out.stdout)
-    file_start = float(info['format'].get('start_time', 0))
-    video_start = float(info['streams'][0].get('start_time', file_start)) if info['streams'] else file_start
-    return video_start, file_start, float(info['format'].get('duration', 0))
-
-
-def passthrough_option():
-    # Keep every decoded frame as it is (no frames repeated or dropped): -fps_mode in ffmpeg 5.1+, -vsync before that
-    test = subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'nullsrc=s=16x16',
-                           '-frames:v', '1', '-fps_mode', 'passthrough', '-f', 'null', '-'], capture_output=True)
-    return ['-fps_mode', 'passthrough'] if test.returncode == 0 else ['-vsync', '0']
-
-
-def read_frame_times(stream, on_frame=None):
-    # Timestamps of the frames reported by ffmpeg's showinfo filter on stderr, in decoding output order
-    times = []
-    for line in stream:
-        match = re.search(rb' n: *\d+ .*pts_time: *([-\d.]+)', line)
-        if match:
-            times.append(float(match.group(1)))
-            if on_frame:
-                on_frame(len(times))
-    return times
-
-
-def packet_frame_times(path, passthrough):
-    # Frame timestamps from the video packets, without decoding (seconds for a long recording): the packets'
-    # presentation times in order, from the first frame the decoder outputs (frames before the first keyframe are
-    # dropped). None if the packets can't be used this way (missing or non-increasing timestamps).
-    out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'packet=pts_time,dts_time',
-                          '-of', 'csv=p=0', path], capture_output=True, text=True)
-    try:
-        packets = np.array([[float(v) for v in line.split(',')[:2]] for line in out.stdout.split()])
-    except ValueError:  # N/A timestamps
-        return None
-    if out.returncode or not len(packets) or not np.all(np.diff(packets[:, 1]) > 0):
-        return None
-    first = subprocess.run(['ffmpeg', '-hide_banner', '-nostdin', '-nostats', '-loglevel', 'info', '-copyts', '-i', path,
-                            '-an', '-sn', '-vf', 'showinfo', *passthrough, '-frames:v', '1', '-f', 'null', '-'],
-                           capture_output=True)
-    first_time = read_frame_times(first.stderr.splitlines())
-    if not first_time:
-        return None
-    times = np.sort(packets[:, 0])
-    return times[times >= first_time[0] - 1e-4]
-
-
-def decoded_frame_times(path, passthrough, expected_frames):
-    # Frame timestamps from decoding the whole video with the same ffmpeg options as FrameReader (minutes)
-    proc = subprocess.Popen(['ffmpeg', '-hide_banner', '-nostdin', '-nostats', '-loglevel', 'info', '-copyts', '-i', path,
-                             '-an', '-sn', '-vf', 'showinfo', *passthrough, '-f', 'null', '-'],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    started = time.monotonic()
-    shown = [started]
-
-    def progress(n):
-        now = time.monotonic()
-        if now - shown[0] >= 1:
-            shown[0] = now
-            print(f'\r  {n:,} frames, about {min(n / max(expected_frames, 1), 1):.0%}, {now - started:.0f} s', end='', flush=True)
-
-    times = np.array(read_frame_times(proc.stderr, progress))
-    proc.wait()
-    print(f'\r  {len(times):,} frames in {time.monotonic() - started:.0f} s' + ' ' * 20)
-    return times
-
-
-def frame_times(path, cache_path, passthrough, expected_frames, fits_results):
-    # Timestamp of every frame of the video: frame N of the CSVs (main_Combined.py counts decoded frames) is entry N.
-    # From the packets if their count fits the results (fits_results(count)), else by decoding the whole video.
-    # Cached in cache_path.
-    key = (os.path.basename(path), os.path.getsize(path))
-    try:
-        with np.load(cache_path) as cached:
-            if (str(cached['video']), int(cached['size'])) == key:
-                return cached['times']
-    except (OSError, KeyError, ValueError):
-        pass
-    print(f'Listing the frames of {key[0]} (only the first time this video is played)...')
-    times = packet_frame_times(path, passthrough)
-    if times is None or not fits_results(len(times)):
-        print('  The video packets do not give the frames exactly, so decoding the whole video (once):')
-        times = decoded_frame_times(path, passthrough, expected_frames)
-    if not len(times):
-        sys.exit(f'ffmpeg could not decode any frames of {path}')
-    try:
-        with open(cache_path + '.part', 'wb') as file:
-            np.savez(file, times=times, video=key[0], size=key[1])
-        os.replace(cache_path + '.part', cache_path)
-    except OSError as error:
-        print(f'  (could not save the frame list: {error})')
-    return times
 
 
 class FrameReader:
@@ -253,12 +155,13 @@ class Video:
         self.results = Results(rows, emotions, aus)
         video_start, file_start, self.duration = probe(self.path)
         passthrough = passthrough_option()
-        # main_Combined.py analyses every step-th frame up to the last one it decodes, so its last analysed frame
-        # is within one step of the end: anything else means it decoded this file differently
-        last, step = (rows['frame'].iloc[-1] if len(rows) else -1), self.results.step
-        fits = lambda count: 0 < count - last <= step
-        times = frame_times(self.path, os.path.join(results_path(patient, self.name, settings), 'frame_times.npz'),
-                            passthrough, self.duration * self.fps, fits)
+        last = rows['frame'].iloc[-1] if len(rows) else -1
+        fits = fits_results(rows['frame'].to_numpy())
+        try:
+            times = frame_times(self.path, os.path.join(results_path(patient, self.name, settings), CACHE_NAME),
+                                passthrough, self.duration * self.fps, fits)
+        except RuntimeError as error:
+            sys.exit(str(error))
         display_w = min(max_width, width)
         display_h = round(height * display_w / width / 2) * 2
         self.scale = display_w / width

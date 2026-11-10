@@ -123,17 +123,21 @@ def raw_videos(settings, patient):
     return names
 
 
-def resolution(video, paths):
-    # 'WIDTHxHEIGHT' of a video (a results folder name, or a raw file name), or '' if its file isn't found.
-    # Results of converted videos are named <file>.mp4: if that .mp4 is gone, the raw <file>.m2t / .wmv is read.
+def video_candidates(video, paths):
+    # Paths of the files a video (a results folder name, or a raw file name) may be, best first: results of converted
+    # videos are named <file>.mp4, and if that .mp4 is gone the raw <file>.m2t / .wmv is used
     stem = os.path.splitext(video)[0]
-    for name in [video, stem + '.m2t', stem + '.wmv']:
-        if name in paths:
-            capture = cv2.VideoCapture(paths[name])
-            width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            capture.release()
-            if width and height:
-                return f'{width}x{height}'
+    return [paths[name] for name in dict.fromkeys([video, stem + '.m2t', stem + '.wmv']) if name in paths]
+
+
+def resolution(video, paths):
+    # 'WIDTHxHEIGHT' of a video, or '' if its file isn't found
+    for path in video_candidates(video, paths):
+        capture = cv2.VideoCapture(path)
+        width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        capture.release()
+        if width and height:
+            return f'{width}x{height}'
     return ''
 
 

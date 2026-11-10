@@ -424,6 +424,13 @@ for i in unprocessed_videos:
           
       frameNr = frameNr + 1
   capture.release()
+  # The time stored in the video file of each analysed frame, for lining the results up with iEEG
+  # (outputs_frame_times.csv, see video_times.py; make_frame_times.py adds it to older results)
+  try:
+    from video_times import write_frame_times_csv
+    write_frame_times_csv(save_folder_now, video_path)
+  except Exception as error:  # the other results are saved either way
+    print(f'Could not write the frame times (run python make_frame_times.py --patient {PAT_NOW}): {error}')
   os.rename(save_folder_now, final_folder_now)
   print(f'Finished {i}: {final_folder_now}')
 
